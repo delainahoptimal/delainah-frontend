@@ -81,32 +81,43 @@ export default function ConsoleApp() {
   const [toast, setToast] = useState("");
   const [verificationContacts, setVerificationContacts] = useState({ email: "", phone: "", userType: "" });
   const postLoginPath = useRef("");
+  const loggingOut = useRef(false);
+  const sessionGeneration = useRef(0);
   const isPublicRoute = publicRoutes.has(pathname);
 
   async function refreshSession() {
+    const generation = ++sessionGeneration.current;
     setLoading(true);
     setSessionError("");
     try {
-      setSession(await loadSession());
+      const nextSession = await loadSession();
+      if (generation !== sessionGeneration.current) return false;
+      setSession(nextSession);
+      return true;
     } catch (error) {
-      setSession(null);
-      setSessionError(errorMessage(error));
+      if (generation === sessionGeneration.current) {
+        setSession(null);
+        setSessionError(errorMessage(error));
+      }
+      return false;
     } finally {
-      setLoading(false);
+      if (generation === sessionGeneration.current) setLoading(false);
     }
   }
 
   useEffect(() => {
+    if (isPublicRoute || session || loggingOut.current) return;
     let active = true;
+    const generation = sessionGeneration.current;
     loadSession()
-      .then((value) => { if (active) setSession(value); })
-      .catch((error: unknown) => { if (active) setSessionError(errorMessage(error)); })
-      .finally(() => { if (active) setLoading(false); });
+      .then((value) => { if (active && generation === sessionGeneration.current) setSession(value); })
+      .catch((error: unknown) => { if (active && generation === sessionGeneration.current) setSessionError(errorMessage(error)); })
+      .finally(() => { if (active && generation === sessionGeneration.current) setLoading(false); });
     return () => { active = false; };
-  }, []);
+  }, [isPublicRoute, session]);
 
   useEffect(() => {
-    if (session && (pathname === "/" || pathname === "/login") && !postLoginPath.current) router.replace("/overview");
+    if (session && (pathname === "/" || pathname === "/login") && !postLoginPath.current && !loggingOut.current) router.replace("/overview");
     if (!loading && !session && !isPublicRoute && pathname !== "/") router.replace("/login");
   }, [isPublicRoute, loading, pathname, postLoginPath, router, session]);
 
@@ -145,23 +156,27 @@ export default function ConsoleApp() {
       }
       throw reason;
     }
-    await refreshSession();
+    if (!await refreshSession()) throw new Error("Sign-in succeeded, but the session could not be verified. Please try again.");
+    loggingOut.current = false;
     const destination = postLoginPath.current || "/overview";
     postLoginPath.current = "";
     router.replace(destination);
   }
 
   async function onLogout() {
+    loggingOut.current = true;
+    sessionGeneration.current += 1;
     try { await apiRequest("auth/logout", { method: "POST", body: {} }); }
     catch (reason) {
       if (!(reason instanceof ApiError && reason.status === 401)) setToast("Signed out locally; the server could not revoke this session.");
     } finally {
       setSession(null);
-      router.replace("/login");
+      setLoading(false);
+      router.replace("/");
     }
   }
 
-  if (isPublicRoute || (!session && !loading && (pathname === "/" || pathname === "/login"))) {
+  if (isPublicRoute || (!session && !loading && pathname === "/login")) {
     return <AuthScreen key={isPublicRoute ? pathname : "/login"} path={isPublicRoute ? pathname : "/login"} onLogin={onLogin} verificationContacts={verificationContacts} onRegistered={(email, phone, userType) => { setVerificationContacts({ email, phone, userType }); router.push("/verify"); }} onContinueToKyc={() => { postLoginPath.current = "/kyc/new"; router.push("/login"); }} />;
   }
 
@@ -216,7 +231,7 @@ export default function ConsoleApp() {
         </header>
         <main className="mx-auto max-w-[1440px] px-4 pb-12 pt-7 sm:px-7 lg:px-9 lg:pt-9">
           {session.permissionError && <div role="alert" className="mb-5 flex items-center justify-between gap-4 rounded-lg border border-[#edcf9e] bg-[#fff8e8] px-4 py-3 text-xs text-[#7d5b20]">Permission bootstrap failed. Protected actions are hidden until it is retried.<button className="flex shrink-0 items-center gap-1 font-semibold" onClick={() => void refreshSession()}>Retry <ArrowRight size={13} /></button></div>}
-          <WorkflowPages path={pathname} session={session} onToast={setToast} onSessionRefresh={refreshSession} />
+          <WorkflowPages path={pathname} session={session} onToast={setToast} onSessionRefresh={async () => { await refreshSession(); }} />
         </main>
       </div>
       {toast && <div role="status" className="fixed bottom-5 right-5 z-50 flex max-w-[calc(100vw-40px)] items-start gap-3 rounded-xl bg-[var(--forest)] px-4 py-3 text-sm text-white shadow-xl"><span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[var(--lime)]" />{toast}</div>}
