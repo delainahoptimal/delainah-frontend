@@ -1,3 +1,5 @@
+import { createUuid } from "@/lib/uuid";
+
 export type ApiOptions = {
   method?: "GET" | "POST" | "PATCH" | "PUT" | "DELETE";
   body?: unknown;
@@ -37,7 +39,7 @@ export async function apiRequest<T>(path: string, options: ApiOptions = {}): Pro
   const [pathPart, queryPart] = path.split("?", 2);
   const cleanPath = pathPart.replace(/^\/+|\/+$/g, "");
   const headers = new Headers(options.headers);
-  const requestId = crypto.randomUUID();
+  const requestId = createUuid();
   headers.set("X-Request-ID", requestId);
   if (options.body !== undefined && !(options.body instanceof FormData)) {
     headers.set("Content-Type", "application/json");

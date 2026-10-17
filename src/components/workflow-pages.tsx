@@ -9,6 +9,7 @@ import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import type { Page, SessionUser } from "@/lib/api";
 import { apiRequest, ApiError, errorMessage, pageQuery } from "@/lib/api";
+import { createUuid } from "@/lib/uuid";
 import { readOfflineEntries, removeOfflineEntry, storeOfflineEntry } from "@/lib/offline-queue";
 import type { OfflineEntry } from "@/lib/offline-queue";
 
@@ -255,7 +256,7 @@ function OfflineSyncPage({ session, onToast }: { session: SessionInfo; onToast: 
   if (!canQueueService && !canQueueReport) return <Denied title="Offline field sync" permission="service_request.create or field_report.create" />;
 
   async function queue(kind: OfflineEntry["kind"], payload: Record<string, unknown>) {
-    const entry: OfflineEntry = { device_reference: crypto.randomUUID(), kind, created_at: new Date().toISOString(), payload };
+    const entry: OfflineEntry = { device_reference: createUuid(), kind, created_at: new Date().toISOString(), payload };
     await storeOfflineEntry(entry);
     setRefresh((value) => value + 1);
     onToast("Saved to encrypted offline queue. This is not yet server-confirmed.");

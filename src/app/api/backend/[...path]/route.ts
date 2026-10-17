@@ -1,5 +1,6 @@
 import { cookies } from "next/headers";
 import { NextRequest } from "next/server";
+import { createUuid } from "@/lib/uuid";
 
 const ACCESS_COOKIE = "delainah_access";
 const REFRESH_COOKIE = "delainah_refresh";
@@ -43,7 +44,7 @@ async function refreshTokens(refresh: string, requestId: string) {
 async function proxy(request: NextRequest, context: RouteContext, method: ProxyMethod) {
   const { path } = await context.params;
   const apiPath = path.join("/");
-  const requestId = request.headers.get("X-Request-ID") || crypto.randomUUID();
+  const requestId = request.headers.get("X-Request-ID") || createUuid();
   const store = await cookies();
   const isLogin = apiPath === "auth/login" && method === "POST";
   const isLogout = apiPath === "auth/logout" && method === "POST";
