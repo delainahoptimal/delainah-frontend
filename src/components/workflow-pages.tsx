@@ -4,13 +4,14 @@ import {
   Activity, ArrowLeft, ArrowRight, BadgeCheck, ChevronLeft, ChevronRight, CircleAlert,
   Download, FilePlus2, Filter, LoaderCircle, Plus, RefreshCw, Search, ShieldAlert, Upload, X,
 } from "lucide-react";
+import Image from "next/image";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import type { Page, SessionUser } from "@/lib/api";
 import { apiRequest, ApiError, errorMessage, pageQuery } from "@/lib/api";
 import { createUuid } from "@/lib/uuid";
-import { readOfflineEntries, removeOfflineEntry, storeOfflineEntry } from "@/lib/offline-queue";
+import { isEncryptedOfflineQueueAvailable, readOfflineEntries, removeOfflineEntry, storeOfflineEntry } from "@/lib/offline-queue";
 import type { OfflineEntry } from "@/lib/offline-queue";
 
 type Row = Record<string, unknown>;
@@ -236,6 +237,7 @@ function OfflineSyncPage({ session, onToast }: { session: SessionInfo; onToast: 
   const [serviceError, setServiceError] = useState<unknown>(null);
   const [reportError, setReportError] = useState<unknown>(null);
   const [syncError, setSyncError] = useState<unknown>(null);
+  const [encryptedQueueAvailable, setEncryptedQueueAvailable] = useState<boolean | null>(null);
   const [serviceValues, setServiceValues] = useState<Record<string, string>>({});
   const [reportValues, setReportValues] = useState<Record<string, string>>({ report_type: "FIELD" });
   const [busy, setBusy] = useState(false);
@@ -250,12 +252,19 @@ function OfflineSyncPage({ session, onToast }: { session: SessionInfo; onToast: 
     window.addEventListener("offline", updateStatus);
     return () => { window.removeEventListener("online", updateStatus); window.removeEventListener("offline", updateStatus); };
   }, []);
-  useEffect(() => { let active = true; readOfflineEntries().then((records) => { if (active) setEntries(records); }).catch((reason: unknown) => { if (active) setSyncError(reason); }); return () => { active = false; }; }, [refresh]);
+  useEffect(() => {
+    let active = true;
+    const available = isEncryptedOfflineQueueAvailable();
+    Promise.resolve().then(() => { if (active) setEncryptedQueueAvailable(available); });
+    if (available) readOfflineEntries().then((records) => { if (active) setEntries(records); }).catch((reason: unknown) => { if (active) setSyncError(reason); });
+    return () => { active = false; };
+  }, [refresh]);
   useEffect(() => { if (!online || !canReadSynced) return; let active = true; apiRequest<Row[]>("field-offline/service-requests").then((records) => { if (active) setServerEntries(records); }).catch((reason: unknown) => { if (active) setSyncError(reason); }); return () => { active = false; }; }, [canReadSynced, online, serverRefresh]);
 
   if (!canQueueService && !canQueueReport) return <Denied title="Offline field sync" permission="service_request.create or field_report.create" />;
 
   async function queue(kind: OfflineEntry["kind"], payload: Record<string, unknown>) {
+    if (!isEncryptedOfflineQueueAvailable()) throw new Error("Encrypted offline storage requires HTTPS. Open this page over a secure connection to queue work.");
     const entry: OfflineEntry = { device_reference: createUuid(), kind, created_at: new Date().toISOString(), payload };
     await storeOfflineEntry(entry);
     setRefresh((value) => value + 1);
@@ -314,6 +323,7 @@ function OfflineSyncPage({ session, onToast }: { session: SessionInfo; onToast: 
   }
 
   return <>{heading("Offline field sync", "Field operations / Sync", "Queue supported service requests and field reports securely, then replay them with their original device reference.")}
+    {encryptedQueueAvailable === false && <div role="status" className="mb-5 rounded-lg border border-[#efc9c0] bg-[#fff6f3] px-4 py-3 text-xs leading-5 text-[#964d3e]">Encrypted offline storage requires HTTPS. Server-confirmed records remain available, but local queue records cannot be read or added over this HTTP connection.</div>}
     <div className="mb-5 flex flex-wrap items-center justify-between gap-4 rounded-xl border border-[var(--line)] bg-white px-5 py-4"><div><div className="eyebrow">Connection</div><div className="mt-1 flex items-center gap-2 text-sm font-semibold"><span className={`h-2 w-2 rounded-full ${online ? "bg-[#55a36e]" : "bg-[var(--coral)]"}`} />{online ? "Online" : "Offline"}</div></div><div className="flex items-center gap-3"><span className="mono text-[11px] text-[var(--muted)]">{entries.length} queued</span><button disabled={!online || busy || entries.length === 0} onClick={() => void syncQueued()} className="primary-button"><RefreshCw size={14} className={busy ? "animate-spin" : ""} />{busy ? "Syncing…" : "Sync queued work"}</button></div></div>
     {Boolean(syncError) && <div className="mb-5"><ErrorPanel error={syncError} /></div>}
     <div className="grid gap-5 xl:grid-cols-2">
@@ -334,7 +344,7 @@ function OfflineSyncPage({ session, onToast }: { session: SessionInfo; onToast: 
         <OfflineField name="project" label="Project ID" /><OfflineField name="purpose" label="Purpose" /><OfflineField name="topic" label="Topic" /><OfflineField name="summary" label="Summary" wide /><OfflineField name="activities" label="Activities" wide /><OfflineField name="observations" label="Observations" wide /><OfflineField name="crop_condition" label="Crop condition" /><OfflineField name="progress" label="Progress" /><OfflineField name="challenges" label="Challenges" /><OfflineField name="recommendations" label="Recommendations" /><OfflineField name="next_action" label="Next action" />
       </div>{Boolean(reportError) && <div className="mt-4"><ErrorPanel error={reportError} /></div>}<button className="primary-button mt-5"><Plus size={14} /> Save report offline</button></form>}
     </div>
-    <section className="surface-panel mt-5 overflow-hidden"><div className="flex items-center justify-between border-b border-[var(--line)] px-5 py-4"><div><div className="eyebrow">Encrypted local queue</div><h2 className="mt-1 text-sm font-semibold">Pending sync</h2></div><span className="status-pill status-wait">OFFLINE DATA</span></div>{entries.length === 0 ? <p className="px-5 py-8 text-center text-xs text-[var(--muted)]">No local records are queued.</p> : <div className="divide-y divide-[var(--line)]">{entries.map((entry) => <article key={entry.device_reference} className="p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><span className={`status-pill ${entry.conflict ? "status-bad" : "status-wait"}`}>{entry.conflict ? "CONFLICT" : "OFFLINE"}</span><span className="text-xs font-semibold">{entry.kind === "service-request" ? "Service request" : "Field report"}</span></div><div className="mono mt-2 text-[10px] text-[var(--muted)]">device_reference: {entry.device_reference}</div><div className="mt-1 text-[10px] text-[var(--muted)]">Saved {display(entry.created_at)}</div></div>{Boolean(entry.conflict) && <button className="secondary-button" onClick={() => exportConflict(entry)}>Export conflict bundle</button>}</div>{Boolean(entry.conflict) && <div className="mt-4 rounded-lg border border-[#efc9c0] bg-[#fff6f3] p-3"><div className="text-xs font-semibold text-[#964d3e]">Server reported a payload conflict</div><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-[#77554f]">{JSON.stringify(entry.conflict, null, 2)}</pre><p className="mt-2 text-[10px] leading-5 text-[#964d3e]">No conflict-resolution endpoint is mounted. This item remains encrypted and queued; do not resend it with changed data.</p></div>}</article>)}</div>}</section>
+    <section className="surface-panel mt-5 overflow-hidden"><div className="flex items-center justify-between border-b border-[var(--line)] px-5 py-4"><div><div className="eyebrow">Encrypted local queue</div><h2 className="mt-1 text-sm font-semibold">Pending sync</h2></div><span className="status-pill status-wait">OFFLINE DATA</span></div>{encryptedQueueAvailable === false ? <p className="px-5 py-8 text-center text-xs text-[var(--muted)]">Local queue contents require a secure HTTPS connection to read.</p> : encryptedQueueAvailable === null ? <p className="px-5 py-8 text-center text-xs text-[var(--muted)]">Checking encrypted storage…</p> : entries.length === 0 ? <p className="px-5 py-8 text-center text-xs text-[var(--muted)]">No local records are queued.</p> : <div className="divide-y divide-[var(--line)]">{entries.map((entry) => <article key={entry.device_reference} className="p-5"><div className="flex flex-wrap items-start justify-between gap-3"><div><div className="flex items-center gap-2"><span className={`status-pill ${entry.conflict ? "status-bad" : "status-wait"}`}>{entry.conflict ? "CONFLICT" : "OFFLINE"}</span><span className="text-xs font-semibold">{entry.kind === "service-request" ? "Service request" : "Field report"}</span></div><div className="mono mt-2 text-[10px] text-[var(--muted)]">device_reference: {entry.device_reference}</div><div className="mt-1 text-[10px] text-[var(--muted)]">Saved {display(entry.created_at)}</div></div>{Boolean(entry.conflict) && <button className="secondary-button" onClick={() => exportConflict(entry)}>Export conflict bundle</button>}</div>{Boolean(entry.conflict) && <div className="mt-4 rounded-lg border border-[#efc9c0] bg-[#fff6f3] p-3"><div className="text-xs font-semibold text-[#964d3e]">Server reported a payload conflict</div><pre className="mt-2 max-h-48 overflow-auto whitespace-pre-wrap break-words text-[10px] leading-5 text-[#77554f]">{JSON.stringify(entry.conflict, null, 2)}</pre><p className="mt-2 text-[10px] leading-5 text-[#964d3e]">No conflict-resolution endpoint is mounted. This item remains encrypted and queued; do not resend it with changed data.</p></div>}</article>)}</div>}</section>
     {canReadSynced && <section className="surface-panel mt-5 overflow-hidden"><div className="flex items-center justify-between border-b border-[var(--line)] px-5 py-4"><div><div className="eyebrow">Server confirmed</div><h2 className="mt-1 text-sm font-semibold">Synced service requests</h2></div><button className="icon-button" title="Refresh synced requests" aria-label="Refresh synced requests" onClick={() => setServerRefresh((value) => value + 1)}><RefreshCw size={14} /></button></div>{serverEntries.length === 0 ? <p className="px-5 py-6 text-xs text-[var(--muted)]">No confirmed offline service requests returned.</p> : <div className="overflow-x-auto"><table className="data-table"><thead><tr><th>Device reference</th><th>Request</th><th>Status</th><th>Updated</th></tr></thead><tbody>{serverEntries.map((entry, index) => <tr key={String(entry.id ?? index)}><td className="mono text-[10px]">{display(entry.device_reference)}</td><td>{display(entry.entity_id ?? entry.service_request ?? entry.entity_type)}</td><td><span className={`status-pill ${statusClass(display(entry.status))}`}>{display(entry.status)}</span></td><td>{display(entry.updated_at ?? entry.created_at)}</td></tr>)}</tbody></table></div>}</section>}
   </>;
 }
@@ -784,7 +794,7 @@ function SignedUploadPanel({ title, listPath, startPath, completePath, session, 
 
   if (!canRead && !canUpload) return null;
   return <section className="surface-panel mt-5 p-5 sm:p-6"><div className="flex items-start justify-between gap-3"><div><div className="eyebrow">Private storage</div><h2 className="mt-1 text-sm font-semibold">{title}</h2><p className="mt-1 text-[11px] leading-5 text-[var(--muted)]">Files are saved only after storage upload and API confirmation both succeed. Signed URLs are never retained.</p></div><Upload size={17} className="text-[var(--leaf)]" /></div>
-    {canRead && <div className="mt-4">{loading ? <p className="text-xs text-[var(--muted)]">Loading confirmed files…</p> : loaded && files.length === 0 ? <p className="text-xs text-[var(--muted)]">No confirmed files yet.</p> : files.map((file, index) => <div key={String(file.id ?? index)} className="flex items-center gap-3 border-b border-[var(--line)] py-2 text-xs">{title === "Profile photograph" && file.download_url ? <img src={String(file.download_url)} alt="Current profile" className="h-14 w-14 rounded-full object-cover" /> : null}<span className="min-w-0 flex-1 truncate">{display(file.file_name ?? file.name ?? file.id)}</span><span className="text-[var(--muted)]">{display(file.status ?? file.upload_confirmed_at ?? "Confirmed")}</span></div>)}</div>}
+    {canRead && <div className="mt-4">{loading ? <p className="text-xs text-[var(--muted)]">Loading confirmed files…</p> : loaded && files.length === 0 ? <p className="text-xs text-[var(--muted)]">No confirmed files yet.</p> : files.map((file, index) => <div key={String(file.id ?? index)} className="flex items-center gap-3 border-b border-[var(--line)] py-2 text-xs">{title === "Profile photograph" && file.download_url ? <Image src={String(file.download_url)} alt="Current profile" width={56} height={56} unoptimized className="h-14 w-14 rounded-full object-cover" /> : null}<span className="min-w-0 flex-1 truncate">{display(file.file_name ?? file.name ?? file.id)}</span><span className="text-[var(--muted)]">{display(file.status ?? file.upload_confirmed_at ?? "Confirmed")}</span></div>)}</div>}
     {canUpload && <div className="mt-4 flex flex-wrap items-end gap-3 border-t border-[var(--line)] pt-4"><label className="field-label min-w-[220px] flex-1">{multiple ? "Image files" : "Image file"}<input className="field-control !h-auto !py-2" type="file" accept={accept} multiple={multiple} onChange={(event) => setSelectedFiles(Array.from(event.target.files ?? []))} /></label><button onClick={() => void upload()} disabled={busy || selectedFiles.length === 0} className="primary-button">{busy ? "Uploading…" : "Upload and confirm"}</button></div>}
     {message && <p role="status" className="mt-3 text-xs text-[#3e8057]">{message}</p>}{Boolean(error) && <div className="mt-3"><ErrorPanel error={error} onRetry={() => void loadFiles()} /></div>}
   </section>;

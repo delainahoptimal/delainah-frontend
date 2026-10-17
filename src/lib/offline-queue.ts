@@ -12,6 +12,10 @@ const DATABASE = "delainah-field-queue";
 const VERSION = 1;
 const KEY_ID = "queue-key";
 
+export function isEncryptedOfflineQueueAvailable() {
+  return globalThis.isSecureContext && typeof globalThis.crypto?.subtle?.generateKey === "function";
+}
+
 function openDatabase() {
   return new Promise<IDBDatabase>((resolve, reject) => {
     const request = indexedDB.open(DATABASE, VERSION);
