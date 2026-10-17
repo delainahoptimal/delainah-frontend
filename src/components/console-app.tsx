@@ -164,6 +164,7 @@ export default function ConsoleApp() {
   }
 
   async function onLogout() {
+    if (loggingOut.current) return;
     loggingOut.current = true;
     sessionGeneration.current += 1;
     try { await apiRequest("auth/logout", { method: "POST", body: {} }); }
@@ -172,7 +173,7 @@ export default function ConsoleApp() {
     } finally {
       setSession(null);
       setLoading(false);
-      router.replace("/");
+      window.location.replace("/");
     }
   }
 
