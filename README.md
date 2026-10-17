@@ -21,6 +21,8 @@ Next.js App Router console for the currently mounted Django API. Effective permi
 
 The Next.js server proxies `/api/backend/*` to `API_BASE_URL`. Access and refresh tokens are held in HttpOnly, SameSite cookies; the browser does not receive or store JWTs. Direct signed-storage uploads do not include the API bearer token. Configure private-bucket CORS for the web origin as described in the farm registration guide.
 
+Set `ALLOWED_DEV_ORIGINS` in `.env.local` to a comma-separated list of additional hostnames or IP addresses used to access the development server, without a scheme or port. This only affects development HMR requests. Set `PORT` in the process environment or deployment service to change the listening port. Production hostnames are handled by DNS and the reverse proxy; `allowedDevOrigins` does not affect production.
+
 ## Implemented surfaces
 
 - Public farmer/investor registration, login, phone/email OTP verification, password reset, and logout.
