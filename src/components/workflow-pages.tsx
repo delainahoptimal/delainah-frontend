@@ -704,12 +704,12 @@ function FarmLocationEditor({ id, session }: { id: string; session: SessionInfo 
   }
 
   function setSelectedLga(value: string) {
-    setGeographySelection({ state: selectedState, lga: value, ward: "" });
+    setGeographySelection((current) => ({ state: current?.state ?? String(location?.state_id ?? ""), lga: value, ward: "" }));
     setWards([]);
   }
 
   function setSelectedWard(value: string) {
-    setGeographySelection({ state: selectedState, lga: selectedLga, ward: value });
+    setGeographySelection((current) => ({ state: current?.state ?? String(location?.state_id ?? ""), lga: current?.lga ?? String(location?.lga_id ?? ""), ward: value }));
   }
   if (!hasPermission(session, "farm.read")) return null;
 
