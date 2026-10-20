@@ -6,7 +6,7 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import type { Page, SessionUser } from "@/lib/api";
 import { apiRequest, ApiError, errorMessage, pageQuery } from "@/lib/api";
@@ -51,7 +51,7 @@ const resources: Record<string, Resource> = {
     columns: [{ key: "farm_number", label: "Farm ID", mono: true }, { key: "name", label: "Farm name" }, { key: "farmer_name", label: "Farmer" }, { key: "state_name", label: "State" }, { key: "size_hectares", label: "Area (ha)" }, { key: "status", label: "Status", status: true }],
     createPermission: "farm.create", detailHref: "/farms", searchHint: "Farm name or farm ID", statusFilter: ["DRAFT", "PENDING_VERIFICATION", "VERIFIED", "ACTIVE", "SUSPENDED", "INACTIVE", "REJECTED"],
     fields: [
-      { name: "name", label: "Farm name", required: true }, { name: "farmer_id", label: "Farmer", lookup: "farmers", hint: "Leave blank to add a farm to your own account." },
+      { name: "name", label: "Farm name", required: true }, { name: "farmer_id", label: "Farmer", lookup: "farmers", required: true },
       { name: "size_hectares", label: "Size in hectares", type: "number" }, { name: "tenure_type", label: "Tenure type", options: ["OWNED", "LEASED", "COMMUNAL", "OTHER"] },
       { name: "cultivation_status", label: "Cultivation status", options: ["CULTIVATED", "FALLOW", "PREPARING", "OTHER"] },
       { name: "state", label: "State" }, { name: "lga", label: "LGA" }, { name: "ward", label: "Ward" }, { name: "community", label: "Community" },
@@ -133,13 +133,13 @@ const resources: Record<string, Resource> = {
   },
   officers: {
     title: "Field officers", eyebrow: "People / Field team", endpoint: "field-officers/field-officers", permission: "field_officer.read", paginated: true,
-    columns: [{ key: "officer_number", label: "Officer ID", mono: true }, { key: "first_name", label: "Name" }, { key: "email", label: "Email" }, { key: "region", label: "Region" }, { key: "active", label: "Active", status: true }],
+    columns: [{ key: "officer_number", label: "Officer ID", mono: true }, { key: "first_name", label: "Name" }, { key: "email", label: "Email" }, { key: "region_lgas", label: "Coverage" }, { key: "active", label: "Active", status: true }],
     createPermission: "field_officer.create", detailHref: "/field-officers",
-    fields: [{ name: "email", label: "Email", type: "email", required: true }, { name: "password", label: "Initial password", type: "password", required: true }, { name: "first_name", label: "First name", required: true }, { name: "last_name", label: "Last name", required: true }, { name: "phone_number", label: "Phone number", type: "tel" }, { name: "region", label: "Region" }],
+    fields: [{ name: "email", label: "Email", type: "email", required: true }, { name: "password", label: "Initial password", type: "password", required: true }, { name: "first_name", label: "First name", required: true }, { name: "last_name", label: "Last name", required: true }, { name: "phone_number", label: "Phone number", type: "tel" }],
   },
   assignments: {
     title: "Field assignments", eyebrow: "People / Coverage", endpoint: "field-officers/assignments", permission: "assignment.manage", paginated: true,
-    columns: [{ key: "field_officer", label: "Officer" }, { key: "farmer", label: "Farmer" }, { key: "farm", label: "Farm" }, { key: "active", label: "Active", status: true }, { key: "created_at", label: "Assigned" }],
+    columns: [{ key: "field_officer", label: "Officer" }, { key: "farmer", label: "Farmer" }, { key: "farm", label: "Farm" }, { key: "active", label: "Active", status: true }, { key: "assigned_at", label: "Assigned" }],
     createPermission: "assignment.manage",
     fields: [{ name: "field_officer_id", label: "Field officer", lookup: "staffUsers", required: true }, { name: "farmer_id", label: "Farmer", lookup: "farmers" }, { name: "farm_id", label: "Farm", lookup: "farms" }],
   },
@@ -168,8 +168,8 @@ function valueAt(record: Row, key: string): unknown {
 function display(value: unknown): string {
   if (value === null || value === undefined || value === "") return "—";
   if (typeof value === "boolean") return value ? "Yes" : "No";
-  if (Array.isArray(value)) return value.map((item) => typeof item === "object" && item !== null ? display((item as Row).code ?? (item as Row).name) : display(item)).join(", ") || "—";
-  if (typeof value === "object") { const record = value as Row; return display(record.name ?? record.email ?? record.code ?? record.id ?? record.detail ?? "—"); }
+  if (Array.isArray(value)) return value.map(display).join(", ") || "—";
+  if (typeof value === "object") { const record = value as Row; return record.name && record.state_name ? `${display(record.name)}, ${display(record.state_name)}` : display(record.name ?? record.email ?? record.code ?? record.id ?? record.detail ?? "—"); }
   const text = String(value);
   if (/T\d\d:\d\d/.test(text)) { const date = new Date(text); if (!Number.isNaN(date.valueOf())) return new Intl.DateTimeFormat("en-NG", { dateStyle: "medium", timeStyle: "short" }).format(date); }
   return text;
@@ -216,6 +216,7 @@ export default function WorkflowPages({ path, session, onToast, onSessionRefresh
   if (section === "documents" && isDetail) return <RecordDetail id={id!} title="Document record" eyebrow="Verification / Documents" endpoint={`documents/documents/${id}`} session={session} />;
   if (section === "farm-crops" && isDetail) return <RecordDetail id={id!} title="Farm-season crop" eyebrow="Agronomy / Crop record" endpoint={`farm-crops/farm-crops/${id}`} session={session} editableFields={[{ name: "area_hectares", label: "Area (ha)", type: "number" }, { name: "planted_at", label: "Planted date", type: "date" }, { name: "expected_harvest_at", label: "Expected harvest", type: "date" }, { name: "actual_harvest_at", label: "Actual harvest", type: "date" }, { name: "expected_yield", label: "Expected yield", type: "number" }, { name: "actual_yield", label: "Actual yield", type: "number" }, { name: "quality_grade", label: "Quality grade" }, { name: "status", label: "Status" }]} editPermission="farm_crop.update" />;
   if (section === "field-officers" && isDetail) return <RecordDetail id={id!} title="Field officer" eyebrow="People / Field team" endpoint={`field-officers/field-officers/${id}`} session={session} editableFields={[{ name: "region", label: "Region" }, { name: "active", label: "Active", options: ["true", "false"] }]} editPermission="field_officer.update" />;
+  if (section === "admin" && segments[1] === "users" && segments[3] === "permissions") return <UserPermissionManagement id={segments[2]} session={session} onToast={onToast} onSessionRefresh={onSessionRefresh} />;
   if (section === "admin" && segments[1] === "users" && isDetail) return <UserDetail id={id!} session={session} onToast={onToast} onSessionRefresh={onSessionRefresh} />;
   if (section === "admin" && segments[1] === "roles" && isDetail) return <RoleDetail id={id!} session={session} onToast={onToast} onSessionRefresh={onSessionRefresh} />;
   if (section === "admin" && segments[1] === "archivals" && isDetail) return <ArchiveDetail id={id!} session={session} onToast={onToast} />;
@@ -417,7 +418,7 @@ function ResourcePage({ resource, session, onToast }: { resource: Resource; sess
   }
 
   return <>
-    {heading(resource.title, resource.eyebrow)}
+    <div className="flex flex-wrap items-end justify-between gap-3">{heading(resource.title, resource.eyebrow)}{resource === resources.farms && hasPermission(session, "farmer.create") && <Link href="/farmers/new" className="danger-button font-bold"><Plus size={14} /> Create farmer first</Link>}</div>
     <section className="surface-panel overflow-hidden">
       <div className="flex flex-wrap items-center gap-3 border-b border-[var(--line)] px-4 py-4 sm:px-5">
         <label className="relative min-w-[220px] flex-1 sm:max-w-[390px]"><Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-[var(--muted)]" /><input value={search} onChange={(event) => { setPage(1); setSearch(event.target.value); }} placeholder={resource.searchHint ?? "Search records"} className="field-control !h-10 !pl-9" /></label>
@@ -451,6 +452,7 @@ function ResourcePage({ resource, session, onToast }: { resource: Resource; sess
 
 function CreatePage({ resource, session, onToast }: { resource: Resource; session: SessionInfo; onToast: (message: string) => void }) {
   const router = useRouter();
+  const searchParams = useSearchParams();
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [states, setStates] = useState<Row[]>([]);
@@ -459,6 +461,7 @@ function CreatePage({ resource, session, onToast }: { resource: Resource; sessio
   const [selectedState, setSelectedState] = useState("");
   const [selectedLga, setSelectedLga] = useState("");
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
+  const [fieldOfficerRegionsReady, setFieldOfficerRegionsReady] = useState(false);
   const canCreate = hasPermission(session, resource.createPermission);
 
   useEffect(() => { if (resource === resources.farmers || resource === resources.farms) apiRequest<Row[]>("geography/states").then(setStates).catch(() => setStates([])); }, [resource]);
@@ -472,10 +475,15 @@ function CreatePage({ resource, session, onToast }: { resource: Resource; sessio
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    if (resource === resources.officers && !fieldOfficerRegionsReady) {
+      setError("Wait for the officer coverage options to load before creating the account.");
+      return;
+    }
     setBusy(true);
     setError(null);
     const form = new FormData(event.currentTarget);
     const body = Object.fromEntries([...form.entries()].filter(([, value]) => String(value).trim() !== "")) as Row;
+    if (typeof body.region_lgas === "string") body.region_lgas = JSON.parse(body.region_lgas) as string[];
     if ((body.latitude && !body.longitude) || (!body.latitude && body.longitude)) { setError("Enter both latitude and longitude, or leave both blank."); setBusy(false); return; }
     if (body.latitude && (Number(body.latitude) < -90 || Number(body.latitude) > 90)) { setError("Latitude must be between -90 and 90."); setBusy(false); return; }
     if (body.longitude && (Number(body.longitude) < -180 || Number(body.longitude) > 180)) { setError("Longitude must be between -180 and 180."); setBusy(false); return; }
@@ -485,9 +493,44 @@ function CreatePage({ resource, session, onToast }: { resource: Resource; sessio
     for (const name of ["active", "is_required_for_kyc"]) if (body[name] !== undefined) body[name] = body[name] === "true";
     try {
       const result = await apiRequest<Row>(resource.endpoint, { method: "POST", body });
-      onToast(resource === resources.kyc ? "KYC draft created. Add the required documents before submitting." : "Record created from the server response.");
       const newId = recordId(result);
-      router.push(resource.detailHref && newId ? `${resource.detailHref}/${newId}` : `/${routeForResource(resource)}`);
+      const destination = resource.detailHref && newId ? `${resource.detailHref}/${newId}` : `/${routeForResource(resource)}`;
+      if (resource === resources.farmers && result.registration_source === "OFFICER") {
+        if (!newId) {
+          onToast("Farmer created, but automatic submission and sign-off could not run because the server response did not include a profile ID.");
+          router.push("/farms/new");
+          return;
+        }
+        try {
+          await apiRequest<Row>(`farmers/farmers/${newId}/submit`, { method: "POST", body: {} });
+        } catch (reason) {
+          onToast(`Farmer created, but submission failed; the profile may still be a draft. ${errorMessage(reason)}`);
+          router.push(`/farms/new?farmer_id=${encodeURIComponent(newId)}`);
+          return;
+        }
+        try {
+          await apiRequest<Row>(`farmers/farmers/${newId}/field-officer-signoff`, { method: "POST", body: {} });
+        } catch (reason) {
+          onToast(`Farmer created and submitted, but field-officer sign-off failed. ${errorMessage(reason)}`);
+          router.push(`/farms/new?farmer_id=${encodeURIComponent(newId)}`);
+          return;
+        }
+        onToast("Farmer created, submitted for verification, and signed off. Continue by adding a farm.");
+        router.push(`/farms/new?farmer_id=${encodeURIComponent(newId)}`);
+        return;
+      } else if (resource === resources.farmers) {
+        if (newId) {
+          onToast("Farmer created. Continue by adding a farm.");
+          router.push(`/farms/new?farmer_id=${encodeURIComponent(newId)}`);
+        } else {
+          onToast("Farmer created, but the server response did not include a profile ID to preselect for farm creation.");
+          router.push("/farms/new");
+        }
+        return;
+      } else {
+        onToast(resource === resources.kyc ? "KYC draft created. Add the required documents before submitting." : "Record created from the server response.");
+      }
+      router.push(destination);
     } catch (reason) { setError(reason); }
     finally { setBusy(false); }
   }
@@ -503,11 +546,17 @@ function CreatePage({ resource, session, onToast }: { resource: Resource; sessio
       if (resource === resources.kyc && field.name === "verification_method" && ["FARMER", "INVESTOR"].includes(session.user.user_type ?? "")) return null;
       if (resource === resources.reports && fieldValues.report_type === "OTHER" && ["farmer", "farm"].includes(field.name)) return null;
       const required = field.required || resource === resources.reports && fieldValues.report_type === "FIELD" && ["farmer", "farm"].includes(field.name);
-      return <FormField key={field.name} field={{ ...field, required }} states={states} lgas={lgas} wards={wards} selectedState={selectedState} selectedLga={selectedLga} fieldValues={fieldValues} session={session} onFieldValue={(name, value) => setFieldValues((current) => ({ ...current, [name]: value, ...(name === "farmer" ? { farm: "" } : {}) }))} onState={changeState} onLga={changeLga} />;
+      const fieldValuesWithFarmer = fieldValues.farmer_id ? fieldValues : { ...fieldValues, farmer_id: searchParams.get("farmer_id") ?? "" };
+      const formField = <FormField field={{ ...field, required }} states={states} lgas={lgas} wards={wards} selectedState={selectedState} selectedLga={selectedLga} fieldValues={fieldValuesWithFarmer} session={session} onFieldValue={(name, value) => setFieldValues((current) => ({ ...current, [name]: value, ...(name === "farmer" ? { farm: "" } : {}) }))} onState={changeState} onLga={changeLga} />;
+      return resource === resources.farms && field.name === "farmer_id" && hasPermission(session, "farmer.create")
+        ? <div key={field.name}>{formField}<Link href="/farmers/new" className="field-hint mt-2 inline-flex font-semibold text-[#a34e3d] underline">Farmer not listed? Create a new farmer</Link></div>
+        : <div key={field.name}>{formField}</div>;
     })}</div>
+      {resource === resources.officers && <FieldOfficerRegionPicker onReady={setFieldOfficerRegionsReady} />}
+      {resource === resources.farms && session.user.user_type !== "FARMER" && hasPermission(session, "farmer.create") && <Link href="/farmers/new" className="danger-button mt-4 font-bold"><Plus size={14} /> Create a farmer first</Link>}
       {resource === resources.kyc && <p className="mt-4 rounded-lg bg-[#fff8e8] px-3 py-2.5 text-xs leading-5 text-[#7d5b20]">Identity numbers are encrypted by the backend. They are never returned by standard KYC reads.</p>}
       {Boolean(error) && <div className="mt-5"><ErrorPanel error={error} /></div>}
-      <div className="mt-6 flex flex-wrap justify-end gap-2 border-t border-[var(--line)] pt-5"><Link href={`/${routeForResource(resource)}`} className="secondary-button">Cancel</Link><button disabled={busy} className="primary-button">{busy ? "Saving…" : resource === resources.kyc ? "Create draft and add documents" : "Create record"}<ArrowRight size={14} /></button></div>
+      <div className="mt-6 flex flex-wrap justify-end gap-2 border-t border-[var(--line)] pt-5"><Link href={`/${routeForResource(resource)}`} className="secondary-button">Cancel</Link><button disabled={busy || resource === resources.officers && !fieldOfficerRegionsReady} className="primary-button">{busy ? "Saving…" : resource === resources.kyc ? "Create draft and add documents" : "Create record"}<ArrowRight size={14} /></button></div>
     </form>
   </>;
 }
@@ -523,6 +572,69 @@ function FormField({ field, states, lgas, wards, selectedState, selectedLga, fie
   if (field.options) return <label className={`field-label ${wide}`}>{field.label}<select className="field-control" name={field.name} value={fieldValues[field.name] ?? ""} onChange={(event) => onFieldValue(field.name, event.target.value)} required={field.required}><option value="">Select…</option>{field.options.map((value) => <option key={value}>{value}</option>)}</select>{field.hint && <span className="field-hint">{field.hint}</span>}</label>;
   if (field.type === "textarea") return <label className={`field-label ${wide}`}>{field.label}<textarea className="field-control min-h-[86px] resize-y py-2.5" name={field.name} required={field.required} placeholder={field.placeholder} /></label>;
   return <label className={`field-label ${wide}`}>{field.label}<input className="field-control" name={field.name} type={field.type ?? "text"} required={field.required} placeholder={field.placeholder} />{field.hint && <span className="field-hint">{field.hint}</span>}</label>;
+}
+
+function FieldOfficerRegionPicker({ onReady }: { onReady: (ready: boolean) => void }) {
+  const [states, setStates] = useState<Row[]>([]);
+  const [selectedState, setSelectedState] = useState("");
+  const [lgas, setLgas] = useState<Row[]>([]);
+  const [selectedLgas, setSelectedLgas] = useState<string[]>([]);
+  const [search, setSearch] = useState("");
+  const [error, setError] = useState("");
+  const [retry, setRetry] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    apiRequest<Row[]>("geography/states")
+      .then((items) => {
+        if (!active) return;
+        setStates(items);
+        const kwara = items.find((item) => String(item.name ?? "").toLowerCase() === "kwara");
+        if (kwara) setSelectedState(String(kwara.id));
+        else setError("Kwara state was not found in the location data.");
+      })
+      .catch((reason: unknown) => { if (active) setError(errorMessage(reason)); });
+    return () => { active = false; };
+  }, [onReady, retry]);
+
+  useEffect(() => {
+    if (!selectedState) return;
+    let active = true;
+    apiRequest<Row[]>(`geography/states/${selectedState}/lgas`)
+      .then((items) => {
+        if (!active) return;
+        setLgas(items);
+        const ids = items.map((item) => String(item.id));
+        setSelectedLgas(ids);
+        onReady(true);
+        setError("");
+      })
+      .catch((reason: unknown) => { if (active) { setError(errorMessage(reason)); onReady(false); } });
+    return () => { active = false; };
+  }, [onReady, selectedState, retry]);
+
+  const visibleLgas = lgas.filter((lga) => String(lga.name ?? "").toLowerCase().includes(search.trim().toLowerCase()));
+  const allVisibleSelected = visibleLgas.length > 0 && visibleLgas.every((lga) => selectedLgas.includes(String(lga.id)));
+  function toggleLga(id: string) {
+    setSelectedLgas((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+  }
+
+  return <section className="mt-5 rounded-lg border border-[var(--line)] bg-[#fbfcfa] p-4 sm:col-span-2">
+    <div className="eyebrow">Officer coverage</div>
+    <h2 className="mt-1 text-sm font-semibold">Select state and local governments</h2>
+    <p className="mt-1 text-xs leading-5 text-[var(--muted)]">All Kwara LGAs are selected by default. Change state, search, or deselect individual LGAs.</p>
+    <div className="mt-4 grid gap-4 md:grid-cols-2">
+      <label className="field-label">State<select className="field-control" value={selectedState} onChange={(event) => { onReady(false); setSelectedState(event.target.value); setSelectedLgas([]); setLgas([]); }}><option value="">Select a state…</option>{states.map((state) => <option key={String(state.id)} value={String(state.id)}>{display(state.name)}</option>)}</select></label>
+      <label className="field-label">Search local governments<input className="field-control" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Type an LGA name" /></label>
+    </div>
+    {error && <div role="alert" className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[#a34e3d]">{error}<button type="button" className="font-semibold underline" onClick={() => { onReady(false); setRetry((value) => value + 1); }}>Retry</button></div>}
+    {selectedState && <div className="mt-3 max-h-60 overflow-y-auto rounded-md border border-[var(--line)] bg-white p-3">
+      <label className="mb-2 flex items-center gap-2 border-b border-[var(--line)] pb-2 text-xs font-bold text-[var(--ink)]"><input type="checkbox" checked={allVisibleSelected} onChange={() => setSelectedLgas((current) => allVisibleSelected ? current.filter((id) => !visibleLgas.some((lga) => String(lga.id) === id)) : [...new Set([...current, ...visibleLgas.map((lga) => String(lga.id))])])} /> Select all {search ? "matching" : "local governments"}</label>
+      {visibleLgas.length === 0 ? <p className="py-3 text-xs text-[var(--muted)]">{lgas.length ? "No local governments match this search." : "No local governments are available."}</p> : <div className="grid gap-2 sm:grid-cols-2">{visibleLgas.map((lga) => <label key={String(lga.id)} className="flex items-center gap-2 text-xs font-medium text-[var(--ink)]"><input type="checkbox" checked={selectedLgas.includes(String(lga.id))} onChange={() => toggleLga(String(lga.id))} />{display(lga.name)}</label>)}</div>}
+    </div>}
+    <input type="hidden" name="region_lgas" value={JSON.stringify(selectedLgas)} />
+    <p className="mt-2 text-[10px] text-[var(--muted)]">{selectedLgas.length} local government{selectedLgas.length === 1 ? "" : "s"} selected.</p>
+  </section>;
 }
 
 function GeographySelects({ values, onChange }: { values: GeographyValues; onChange: (values: GeographyValues) => void }) {
@@ -636,13 +748,36 @@ function FarmerDetail({ id, session, onToast }: { id: string; session: SessionIn
     { label: "Field officer sign-off", permission: "farmer.signoff", path: (key) => `farmers/farmers/${key}/field-officer-signoff`, body: (reason) => reason ? { notes: reason } : {}, reasonLabel: "Sign-off notes (optional)", states: ["DRAFT", "PENDING_VERIFICATION"], registrationSource: "OFFICER" },
     { label: "Verify farmer", permission: "farmer.verify", path: (key) => `farmers/farmers/${key}/verify`, body: (reason) => reason ? { notes: reason } : {}, reasonLabel: "Verification notes (optional)", states: ["PENDING_VERIFICATION"] },
     { label: "Return for correction", permission: "farmer.return", path: (key) => `farmers/farmers/${key}/return`, body: (reason) => ({ reason }), reasonLabel: "Reason for return", states: ["PENDING_VERIFICATION"] },
+    { label: "Reopen rejected farmer", permission: "farmer.return", path: (key) => `farmers/farmers/${key}/return`, body: (reason) => ({ reason }), reasonLabel: "Reason for reopening", states: ["REJECTED"] },
     { label: "Reject farmer", permission: "farmer.reject", path: (key) => `farmers/farmers/${key}/reject`, body: (reason) => ({ reason }), reasonLabel: "Reason for rejection", states: ["PENDING_VERIFICATION"], tone: "danger" },
     { label: "Activate", permission: "farmer.restore", path: (key) => `farmers/farmers/${key}/status/activate`, body: (reason) => ({ reason }), reasonLabel: "Reason for activation", states: ["INACTIVE", "SUSPENDED"] },
     { label: "Deactivate", permission: "farmer.archive", path: (key) => `farmers/farmers/${key}/status/deactivate`, body: (reason) => ({ reason }), reasonLabel: "Reason for deactivation", states: ["ACTIVE", "VERIFIED"] },
     { label: "Suspend", permission: "farmer.suspend", path: (key) => `farmers/farmers/${key}/status/suspend`, body: (reason) => ({ reason }), reasonLabel: "Reason for suspension", states: ["ACTIVE", "VERIFIED"], tone: "danger" },
     { label: "Request archive", permission: "farmer.delete_request", path: (key) => `farmers/farmers/${key}/deletion-requests`, body: (reason) => ({ reason }), reasonLabel: "Archive request reason", states: ["ACTIVE", "VERIFIED", "SUSPENDED"] },
   ];
-  return <><RecordDetail id={id} title="Farmer profile" eyebrow="Farmer registry / Profile" endpoint={`farmers/farmers/${id}`} historyPath={`farmers/farmers/${id}/history`} session={session} actions={actions} onToast={onToast} editableFields={editableFields} editPermission="farmer.update" geographyFields={canAdminUpdate} /><SignedUploadPanel title="Profile photograph" listPath={`farmers/farmers/${id}/profile-photo`} startPath={`farmers/farmers/${id}/profile-photo`} completePath={(imageId) => `farmers/farmers/${id}/profile-photo/${imageId}/complete`} session={session} permission="farmer.update" accept="image/jpeg,image/png,image/webp" /></>;
+  return <><RecordDetail id={id} title="Farmer profile" eyebrow="Farmer registry / Profile" endpoint={`farmers/farmers/${id}`} historyPath={`farmers/farmers/${id}/history`} session={session} actions={actions} onToast={onToast} editableFields={editableFields} editPermission="farmer.update" geographyFields={canAdminUpdate} /><FarmerFarms id={id} session={session} /><SignedUploadPanel title="Profile photograph" listPath={`farmers/farmers/${id}/profile-photo`} startPath={`farmers/farmers/${id}/profile-photo`} completePath={(imageId) => `farmers/farmers/${id}/profile-photo/${imageId}/complete`} session={session} permission="farmer.update" accept="image/jpeg,image/png,image/webp" /></>;
+}
+
+function FarmerFarms({ id, session }: { id: string; session: SessionInfo }) {
+  const [farms, setFarms] = useState<Row[]>([]);
+  const [error, setError] = useState<unknown>(null);
+  const [loading, setLoading] = useState(true);
+  const allowed = hasPermission(session, "farm.read");
+
+  useEffect(() => {
+    if (!allowed) return;
+    let active = true;
+    apiRequest<Row[]>(`farms/farms?farmer_id=${encodeURIComponent(id)}`)
+      .then((records) => { if (active) setFarms(records); })
+      .catch((reason: unknown) => { if (active) setError(reason); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [allowed, id]);
+
+  if (!allowed) return null;
+  return <section className="surface-panel p-5 sm:p-6"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="eyebrow">Land records</div><h2 className="mt-1 text-sm font-semibold">Farms linked to this farmer</h2></div><Link href={`/farms/new?farmer_id=${encodeURIComponent(id)}`} className="secondary-button"><Plus size={14} /> Add farm</Link></div>
+    {loading ? <p className="mt-4 text-xs text-[var(--muted)]">Loading farms…</p> : error ? <div className="mt-4"><ErrorPanel error={error} /></div> : farms.length === 0 ? <p className="mt-4 text-xs text-[var(--muted)]">No farms are linked to this farmer yet.</p> : <div className="mt-4 divide-y divide-[var(--line)]">{farms.map((farm) => <Link key={recordId(farm)} href={`/farms/${recordId(farm)}`} className="flex flex-wrap items-center justify-between gap-3 py-3 hover:bg-[#f8faf7]"><span><span className="block text-sm font-semibold">{display(farm.name)}</span><span className="mt-1 block text-[10px] text-[var(--muted)]">{display(farm.farm_number)}{farm.state_name ? ` · ${display(farm.state_name)}` : ""}</span></span><span className={`status-pill ${statusClass(String(farm.status ?? ""))}`}>{display(farm.status)}</span></Link>)}</div>}
+  </section>;
 }
 
 function FarmDetail({ id, session, onToast }: { id: string; session: SessionInfo; onToast: (message: string) => void }) {
@@ -876,6 +1011,7 @@ function KycDetail({ id, session, onToast }: { id: string; session: SessionInfo;
 }
 
 function RecordDetail({ id, title, eyebrow, endpoint, historyPath, session, actions = [], onToast, kyc = false, editableFields = [], editPermission, editStates, geographyFields = false }: { id: string; title: string; eyebrow: string; endpoint: string; historyPath?: string; session: SessionInfo; actions?: Action[]; onToast?: (message: string) => void; kyc?: boolean; editableFields?: Field[]; editPermission?: string; editStates?: string[]; geographyFields?: boolean }) {
+  const router = useRouter();
   const [record, setRecord] = useState<Row | null>(null);
   const [history, setHistory] = useState<unknown>(null);
   const [loading, setLoading] = useState(true);
@@ -908,7 +1044,7 @@ function RecordDetail({ id, title, eyebrow, endpoint, historyPath, session, acti
     if (!pendingAction) return;
     setActionBusy(true);
     setActionError(null);
-    try { await apiRequest(pendingAction.path(id), { method: pendingAction.method ?? "POST", body: pendingAction.method === "DELETE" ? undefined : pendingAction.body?.(reason) ?? {} }); setPendingAction(null); setRefresh((value) => value + 1); onToast?.("Action confirmed by the server."); }
+    try { await apiRequest(pendingAction.path(id), { method: pendingAction.method ?? "POST", body: pendingAction.method === "DELETE" ? undefined : pendingAction.body?.(reason) ?? {} }); setPendingAction(null); onToast?.("Action confirmed by the server."); router.push(backHref(eyebrow)); }
     catch (reasonValue) { setActionError(reasonValue); }
     finally { setActionBusy(false); }
   }
@@ -928,6 +1064,7 @@ function RecordDetail({ id, title, eyebrow, endpoint, historyPath, session, acti
       setEditing(false);
       setRefresh((value) => value + 1);
       onToast?.("Changes saved from the server response.");
+      router.push(backHref(eyebrow));
     } catch (reason) { setEditError(reason); }
     finally { setEditBusy(false); }
   }
@@ -959,9 +1096,9 @@ function RecordDetail({ id, title, eyebrow, endpoint, historyPath, session, acti
   const makerId = String(record.created_by_id ?? record.created_by ?? record.officer_user_id ?? record.officer_user ?? "");
   const isOwnKyc = kyc && kycOwnerId === session.user.id;
   const isOwnReport = endpoint.startsWith("field-reports/") && makerId === session.user.id;
-  const availableActions = actions.filter((action) => hasPermission(session, action.permission) && (!action.states || action.states.includes(currentStatus)) && (!action.registrationSource || record.registration_source === action.registrationSource) && !(isOwnKyc && ["kyc.verify", "kyc.return", "kyc.reject"].includes(action.permission)) && !(isOwnReport && ["field_report.review", "field_report.approve"].includes(action.permission)));
+  const availableActions = actions.filter((action) => hasPermission(session, action.permission) && !(endpoint.startsWith("farmers/farmers/") && hasRole(session, "FIELD_OFFICER") && action.label === "Activate") && (!action.states || action.states.includes(currentStatus)) && (!action.registrationSource || record.registration_source === action.registrationSource) && !(isOwnKyc && ["kyc.verify", "kyc.return", "kyc.reject"].includes(action.permission)) && !(isOwnReport && ["field_report.review", "field_report.approve"].includes(action.permission)));
   const canEdit = editableFields.length > 0 && hasPermission(session, editPermission) && (!editStates || editStates.includes(currentStatus));
-  const fields = Object.entries(record).filter(([key, value]) => !["documents", "history", "events", "metadata"].includes(key) && !key.toLowerCase().includes("url") && value !== null && typeof value !== "object");
+  const fields = Object.entries(record).filter(([key, value]) => (key === "region_lgas" && Array.isArray(value)) || (key !== "id" && key !== "field_officer_signed_by" && !key.endsWith("_id") && !(typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) && !["documents", "history", "events", "metadata"].includes(key) && !key.toLowerCase().includes("url") && (value === null || typeof value !== "object")));
   const documents = Array.isArray(record.documents) ? record.documents as Row[] : [];
   const events = history && typeof history === "object" && "events" in history ? (history as { events: Row[] }).events : [];
 
@@ -969,7 +1106,7 @@ function RecordDetail({ id, title, eyebrow, endpoint, historyPath, session, acti
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px]"><div className="space-y-5">
       <section className="surface-panel p-5 sm:p-7"><div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--line)] pb-4"><div><div className="mono text-[10px] text-[var(--muted)]">{id}</div><h2 className="mt-1 text-lg font-semibold">{display(record.name ?? record.first_name ?? record.report_reference ?? record.file_name ?? record.email ?? title)}</h2></div><div className="flex items-center gap-2">{Boolean(record.status) && <span className={`status-pill ${statusClass(currentStatus)}`}>{currentStatus.replaceAll("_", " ")}</span>}{canEdit && <button className="secondary-button !min-h-8" onClick={() => { setEditError(null); setEditing((value) => !value); }}>{editing ? "Close editor" : "Edit details"}</button>}</div></div>
         {endpoint.startsWith("farmers/farmers/") && <div className="mt-4 flex flex-wrap gap-2"><span className={`status-pill ${record.account_active ? "status-good" : "status-bad"}`}>Account {record.account_active ? "active" : "inactive"}</span><span className={`status-pill ${record.farmer_verified ? "status-good" : "status-wait"}`}>Farmer {record.farmer_verified ? "verified" : "not verified"}</span></div>}
-        <dl className="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-2">{fields.filter(([key]) => !(endpoint.startsWith("farmers/farmers/") && ["account_active", "farmer_verified"].includes(key)) && !(endpoint.startsWith("farm-crops/farm-crops/") && ["farm", "crop", "season"].includes(key))).map(([key, value]) => <div key={key} className="min-w-0"><dt className="text-[10px] font-semibold uppercase text-[var(--muted)]">{key.replaceAll("_", " ")}</dt><dd className={`mt-1 break-words text-sm text-[var(--ink)] ${key === "id" || key.endsWith("_id") ? "mono text-[11px]" : ""}`}>{display(value)}</dd></div>)}</dl>
+        <dl className="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-2">{fields.filter(([key]) => !(endpoint.startsWith("farmers/farmers/") && ["account_active", "farmer_verified"].includes(key)) && !(endpoint.startsWith("farm-crops/farm-crops/") && ["farm", "crop", "season"].includes(key))).map(([key, value]) => { const empty = value === null || value === ""; return <div key={key} className="min-w-0"><dt className="detail-label">{key.replaceAll("_", " ")}</dt><dd className={`detail-value ${empty ? "detail-value-empty" : ""}`}>{empty ? "Not provided" : display(value)}</dd></div>; })}</dl>
         {editing && canEdit && <form onSubmit={saveRecord} className="mt-5 grid gap-4 border-t border-[var(--line)] pt-5 sm:grid-cols-2">
           {editableFields.map((field) => <label key={field.name} className={`field-label ${field.wide ? "sm:col-span-2" : ""}`}>{field.label}{field.options ? <select className="field-control" name={field.name} defaultValue={String(record[field.name] ?? "")}><option value="">Select…</option>{field.options.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "textarea" ? <textarea className="field-control min-h-[80px] py-2.5" name={field.name} defaultValue={String(record[field.name] ?? "")} /> : <input className="field-control" name={field.name} type={field.type ?? "text"} defaultValue={String(record[field.name] ?? "")} />}</label>)}
           {geographyFields && <GeographySelects values={geography} onChange={setGeography} />}
@@ -1070,7 +1207,55 @@ function HistoryPanel({ history, events }: { history: unknown; events: Row[] }) 
 function UserDetail({ id, session, onToast, onSessionRefresh }: { id: string; session: SessionInfo; onToast: (message: string) => void; onSessionRefresh: () => Promise<void> }) {
   const editableFields: Field[] = [{ name: "email", label: "Email", type: "email" }, { name: "first_name", label: "First name" }, { name: "last_name", label: "Last name" }, { name: "phone_number", label: "Phone number", type: "tel" }];
   const actions: Action[] = [{ label: "Activate account", permission: "user.activate", path: (key) => `users/users/${key}/activate`, body: () => ({}), states: ["INACTIVE"] }, { label: "Deactivate account", permission: "user.deactivate", path: (key) => `users/users/${key}/deactivate`, body: () => ({}), states: ["ACTIVE"], tone: "danger" }];
-  return <><RecordDetail id={id} title="User account" eyebrow="Access / User" endpoint={`users/users/${id}`} session={session} actions={actions} onToast={onToast} editableFields={editableFields} editPermission="user.update" /><UserRoleAssignments id={id} session={session} onToast={onToast} onSessionRefresh={onSessionRefresh} /></>;
+  return <><RecordDetail id={id} title="User account" eyebrow="Access / User" endpoint={`users/users/${id}`} session={session} actions={actions} onToast={onToast} editableFields={editableFields} editPermission="user.update" /><UserRoleAssignments id={id} session={session} onToast={onToast} onSessionRefresh={onSessionRefresh} />{(session.user.user_type === "SUPER_ADMIN" || hasRole(session, "SUPER_ADMIN")) && <section className="surface-panel mt-5 flex flex-wrap items-center justify-between gap-4 p-5"><div><div className="eyebrow">Individual access</div><h2 className="mt-1 text-sm font-semibold">Direct permission grants</h2><p className="mt-1 text-xs text-[var(--muted)]">Grant additional scoped permissions to this account without changing its roles.</p></div><Link className="primary-button" href={`/admin/users/${id}/permissions`}>Manage permissions <ArrowRight size={14} /></Link></section>}</>;
+}
+
+function UserPermissionManagement({ id, session, onToast, onSessionRefresh }: { id: string; session: SessionInfo; onToast: (message: string) => void; onSessionRefresh: () => Promise<void> }) {
+  const [grants, setGrants] = useState<Row[]>([]);
+  const [permissions, setPermissions] = useState<Row[]>([]);
+  const [permissionId, setPermissionId] = useState("");
+  const [scope, setScope] = useState("OPS");
+  const [expiresAt, setExpiresAt] = useState("");
+  const [error, setError] = useState<unknown>(null);
+  const [refresh, setRefresh] = useState(0);
+  const [busy, setBusy] = useState(false);
+  const canManage = session.user.user_type === "SUPER_ADMIN" || hasRole(session, "SUPER_ADMIN");
+  useEffect(() => {
+    if (!canManage) return;
+    let active = true;
+    Promise.all([
+      apiRequest<Row[]>(`users/users/${id}/permissions`),
+      apiRequest<Row[]>("users/permissions"),
+    ]).then(([grantItems, permissionItems]) => {
+      if (active) { setGrants(grantItems); setPermissions(permissionItems); }
+    }).catch((reason: unknown) => { if (active) setError(reason); });
+    return () => { active = false; };
+  }, [canManage, id, refresh]);
+  if (!canManage) return <Denied title="direct user permission management" permission="SUPER_ADMIN" />;
+  async function grant(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (scope === "ALL" && !window.confirm("ALL grants access to every object scope for this permission. Continue?")) return;
+    setBusy(true); setError(null);
+    try {
+      await apiRequest(`users/users/${id}/permissions`, { method: "POST", body: { permission_id: permissionId, scope, expires_at: expiresAt ? new Date(expiresAt).toISOString() : null } });
+      setRefresh((value) => value + 1); setPermissionId(""); setExpiresAt(""); onToast("Direct permission granted.");
+      if (id === session.user.id) await onSessionRefresh();
+    } catch (reason) { setError(reason); }
+    finally { setBusy(false); }
+  }
+  async function revoke(grantId: string, code: string) {
+    if (!window.confirm(`Revoke the direct ${code} permission grant?`)) return;
+    setError(null);
+    try {
+      await apiRequest(`users/users/${id}/permissions/${grantId}`, { method: "DELETE" });
+      setRefresh((value) => value + 1); onToast("Direct permission revoked.");
+      if (id === session.user.id) await onSessionRefresh();
+    } catch (reason) { setError(reason); }
+  }
+  return <><Link href={`/admin/users/${id}`} className="back-link"><ArrowLeft size={14} /> Back to user</Link>{heading("Direct permissions", "Access / Individual grants", "Add scoped permissions directly to this user. These grants supplement role permissions and can be revoked at any time.")}{Boolean(error) && <div className="mb-4"><ErrorPanel error={error} onRetry={() => setRefresh((value) => value + 1)} /></div>}
+    <section className="surface-panel p-5 sm:p-6"><h2 className="text-sm font-semibold">Grant a permission</h2><form onSubmit={grant} className="mt-4 grid gap-3 sm:grid-cols-2"><label className="field-label">Permission<select className="field-control" required value={permissionId} onChange={(event) => setPermissionId(event.target.value)}><option value="">Choose permission…</option>{permissions.map((permission) => <option key={String(permission.id)} value={String(permission.id)}>{String(permission.code)} — {String(permission.description ?? "")}</option>)}</select></label><label className="field-label">Scope<select className="field-control" value={scope} onChange={(event) => setScope(event.target.value)}>{scopeOptions.map((item) => <option key={item} value={item}>{item}</option>)}</select></label><label className="field-label">Expires (optional)<input className="field-control" type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} /></label><button className="primary-button self-end sm:justify-self-start" disabled={busy || !permissionId}>{busy ? "Saving…" : "Grant permission"}</button></form>{scope === "ALL" && <p className="mt-3 text-xs font-medium text-[#a34e3d]">ALL is broad and applies to all object scopes.</p>}</section>
+    <section className="surface-panel mt-5 p-5 sm:p-6"><h2 className="text-sm font-semibold">Permission grants</h2>{grants.length === 0 ? <p className="mt-4 text-xs text-[var(--muted)]">No direct permission grants for this user.</p> : <div className="mt-3 divide-y divide-[var(--line)]">{grants.map((grantItem) => { const grantId = String(grantItem.id ?? ""); const code = String(grantItem.permission_code ?? "Permission"); const effective = Boolean(grantItem.is_effective); return <div key={grantId} className="flex flex-wrap items-center justify-between gap-3 py-3"><div><div className="text-xs font-semibold">{code} <span className="ml-2 rounded-full bg-[#edf3ee] px-2 py-1 text-[10px]">{String(grantItem.scope)}</span></div><div className="mt-1 text-[10px] text-[var(--muted)]">{effective ? "Effective" : grantItem.is_active ? "Expired" : "Revoked"} · Granted {display(grantItem.granted_at)} · Expires {display(grantItem.expires_at ?? "No expiry")}</div></div>{Boolean(grantItem.is_active) && <button type="button" onClick={() => void revoke(grantId, code)} className="text-xs font-semibold text-[#a34e3d]">Revoke</button>}</div>; })}</div>}</section>
+  </>;
 }
 
 function UserRoleAssignments({ id, session, onToast, onSessionRefresh }: { id: string; session: SessionInfo; onToast: (message: string) => void; onSessionRefresh: () => Promise<void> }) {

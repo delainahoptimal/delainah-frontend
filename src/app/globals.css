@@ -53,6 +53,9 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 .field-control:disabled { cursor: not-allowed; background: #f1f4f1; color: #9aa69d; }
 .field-control:focus { border-color: #76a485; outline: none; box-shadow: 0 0 0 3px rgba(63, 136, 97, 0.12); }
 .field-hint { color: var(--muted); font-size: 10px; font-weight: 400; line-height: 1.5; }
+.detail-label { color: #52665a; font-size: 10px; font-weight: 700; letter-spacing: 0.055em; text-transform: uppercase; }
+.detail-value { margin-top: 5px; overflow-wrap: anywhere; color: var(--ink); font-size: 13px; font-weight: 500; }
+.detail-value-empty { color: #b33f32; font-weight: 700; }
 .primary-button, .secondary-button, .danger-button { display: inline-flex; min-height: 38px; align-items: center; justify-content: center; gap: 8px; border-radius: 7px; padding: 0 13px; font-size: 11px; font-weight: 700; transition: background 140ms ease, border-color 140ms ease, color 140ms ease; }
 .primary-button { border: 1px solid var(--forest); background: var(--forest); color: #fff; }
 .primary-button:hover { background: #20523a; }
