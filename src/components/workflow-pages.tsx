@@ -2,7 +2,7 @@
 
 import {
   Activity, ArrowLeft, ArrowRight, BadgeCheck, ChevronLeft, ChevronRight, CircleAlert,
-  Download, FilePlus2, Filter, LoaderCircle, Plus, RefreshCw, Search, ShieldAlert, Upload, X,
+  Download, FilePlus2, Filter, LoaderCircle, MapPin, Plus, RefreshCw, RotateCcw, Search, ShieldAlert, Upload, X,
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
@@ -18,6 +18,7 @@ type Row = Record<string, unknown>;
 type SessionInfo = { user: SessionUser; permissions: string[]; roles: unknown[]; permissionError?: boolean };
 type LookupKind = "farmers" | "farms" | "seasons" | "crops" | "farmCrops" | "staffUsers";
 type GeographyValues = { state: string; lga: string; ward: string };
+type FarmCoordinate = { latitude: number; longitude: number };
 type Field = { name: string; label: string; type?: string; required?: boolean; options?: string[]; lookup?: LookupKind; dependsOn?: string; placeholder?: string; hint?: string; wide?: boolean };
 type Column = { key: string; label: string; mono?: boolean; status?: boolean };
 type Action = { label: string; permission: string; path: (id: string) => string; method?: "POST" | "PATCH" | "DELETE"; body?: (reason: string) => Row; reasonLabel?: string; states?: string[]; registrationSource?: string; tone?: "danger" };
@@ -505,6 +506,16 @@ function CreatePage({ resource, session, onToast }: { resource: Resource; sessio
       const required = field.required || resource === resources.reports && fieldValues.report_type === "FIELD" && ["farmer", "farm"].includes(field.name);
       return <FormField key={field.name} field={{ ...field, required }} states={states} lgas={lgas} wards={wards} selectedState={selectedState} selectedLga={selectedLga} fieldValues={fieldValues} session={session} onFieldValue={(name, value) => setFieldValues((current) => ({ ...current, [name]: value, ...(name === "farmer" ? { farm: "" } : {}) }))} onState={changeState} onLga={changeLga} />;
     })}</div>
+      {resource === resources.farms && <div className="sm:col-span-2"><FarmBoundaryCapture onBoundary={(boundary) => setFieldValues((current) => ({
+        ...current,
+        size_hectares: boundary?.sizeHectares ?? "",
+        latitude: boundary?.latitude ?? "",
+        longitude: boundary?.longitude ?? "",
+      }))} /><div className="mt-4"><CurrentLocationCapture onCoordinates={(coordinates) => setFieldValues((current) => ({
+        ...current,
+        latitude: coordinates.latitude.toFixed(7),
+        longitude: coordinates.longitude.toFixed(7),
+      }))} /></div></div>}
       {resource === resources.kyc && <p className="mt-4 rounded-lg bg-[#fff8e8] px-3 py-2.5 text-xs leading-5 text-[#7d5b20]">Identity numbers are encrypted by the backend. They are never returned by standard KYC reads.</p>}
       {Boolean(error) && <div className="mt-5"><ErrorPanel error={error} /></div>}
       <div className="mt-6 flex flex-wrap justify-end gap-2 border-t border-[var(--line)] pt-5"><Link href={`/${routeForResource(resource)}`} className="secondary-button">Cancel</Link><button disabled={busy} className="primary-button">{busy ? "Saving…" : resource === resources.kyc ? "Create draft and add documents" : "Create record"}<ArrowRight size={14} /></button></div>
@@ -521,8 +532,8 @@ function FormField({ field, states, lgas, wards, selectedState, selectedLga, fie
     return <label className={`field-label ${wide}`}>{field.label}<select className="field-control" name={field.name} disabled={disabled} onChange={(event) => field.name === "state" ? onState(event.target.value) : field.name === "lga" ? onLga(event.target.value) : undefined}><option value="">Optional</option>{entries.map((entry) => <option key={String(entry.id)} value={String(entry.id)}>{display(entry.name)}</option>)}</select></label>;
   }
   if (field.options) return <label className={`field-label ${wide}`}>{field.label}<select className="field-control" name={field.name} value={fieldValues[field.name] ?? ""} onChange={(event) => onFieldValue(field.name, event.target.value)} required={field.required}><option value="">Select…</option>{field.options.map((value) => <option key={value}>{value}</option>)}</select>{field.hint && <span className="field-hint">{field.hint}</span>}</label>;
-  if (field.type === "textarea") return <label className={`field-label ${wide}`}>{field.label}<textarea className="field-control min-h-[86px] resize-y py-2.5" name={field.name} required={field.required} placeholder={field.placeholder} /></label>;
-  return <label className={`field-label ${wide}`}>{field.label}<input className="field-control" name={field.name} type={field.type ?? "text"} required={field.required} placeholder={field.placeholder} />{field.hint && <span className="field-hint">{field.hint}</span>}</label>;
+  if (field.type === "textarea") return <label className={`field-label ${wide}`}>{field.label}<textarea className="field-control min-h-[86px] resize-y py-2.5" name={field.name} required={field.required} placeholder={field.placeholder} value={fieldValues[field.name] ?? ""} onChange={(event) => onFieldValue(field.name, event.target.value)} /></label>;
+  return <label className={`field-label ${wide}`}>{field.label}<input className="field-control" name={field.name} type={field.type ?? "text"} required={field.required} placeholder={field.placeholder} value={fieldValues[field.name] ?? ""} onChange={(event) => onFieldValue(field.name, event.target.value)} />{field.hint && <span className="field-hint">{field.hint}</span>}</label>;
 }
 
 function GeographySelects({ values, onChange }: { values: GeographyValues; onChange: (values: GeographyValues) => void }) {
@@ -660,6 +671,157 @@ function FarmDetail({ id, session, onToast }: { id: string; session: SessionInfo
   return <><RecordDetail id={id} title="Farm detail" eyebrow="Land / Farm record" endpoint={`farms/farms/${id}`} historyPath={`farms/farms/${id}/history`} session={session} actions={actions} onToast={onToast} editableFields={editableFields} editPermission="farm.update" /><FarmLocationEditor id={id} session={session} /><SignedUploadPanel title="Farm land images" listPath={`farms/farms/${id}/images`} startPath={`farms/farms/${id}/images`} completePath={(imageId) => `farms/farms/${id}/images/${imageId}/complete`} session={session} permission="farm.update" accept="image/jpeg,image/png,image/webp" multiple /></>;
 }
 
+function getCurrentCoordinates(): Promise<FarmCoordinate> {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) {
+      reject(new Error("Location services are unavailable. Use HTTPS or localhost, allow browser location access, and try again."));
+      return;
+    }
+    navigator.geolocation.getCurrentPosition(
+      ({ coords }) => resolve({ latitude: coords.latitude, longitude: coords.longitude }),
+      (reason) => {
+        const message = reason.code === reason.PERMISSION_DENIED
+          ? "Location access is blocked. Choose Allow in your browser's location prompt. If you previously blocked it, open this site's browser permissions, change Location to Allow, then try again."
+          : reason.code === reason.POSITION_UNAVAILABLE
+            ? "Your current location could not be determined. Move to an area with a clearer GPS signal and try again."
+            : "Finding your location timed out. Try again when GPS reception is better.";
+        reject(new Error(message));
+      },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: 20000 },
+    );
+  });
+}
+
+function CurrentLocationCapture({ onCoordinates }: { onCoordinates: (coordinates: FarmCoordinate) => void }) {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+
+  async function capture() {
+    setBusy(true);
+    setError("");
+    try {
+      onCoordinates(await getCurrentCoordinates());
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <div className="rounded-lg border border-[var(--line)] bg-[#f8faf7] p-3">
+    <button type="button" className="secondary-button" disabled={busy} onClick={() => void capture()}><MapPin size={14} />{busy ? "Waiting for browser permission…" : "Share my current location"}</button>
+    <p className="mt-2 text-[10px] leading-4 text-[var(--muted)]">Select this button to open your browser&apos;s location permission prompt, then choose Allow. You can also enter coordinates manually.</p>
+    {error && <p role="alert" className="mt-2 text-[10px] leading-4 text-[#a34e3d]">{error}</p>}
+  </div>;
+}
+
+function calculateFarmBoundary(points: FarmCoordinate[]) {
+  if (points.length < 3) return null;
+  const earthRadius = 6371008.8;
+  const radians = Math.PI / 180;
+  const meanLatitude = points.reduce((sum, point) => sum + point.latitude, 0) / points.length;
+  const longitudeScale = Math.cos(meanLatitude * radians);
+  if (Math.abs(longitudeScale) < 1e-8) return null;
+  const projected = points.map((point) => ({
+    x: earthRadius * point.longitude * radians * longitudeScale,
+    y: earthRadius * point.latitude * radians,
+  }));
+  let twiceArea = 0;
+  let centroidX = 0;
+  let centroidY = 0;
+  projected.forEach((point, index) => {
+    const next = projected[(index + 1) % projected.length];
+    const cross = point.x * next.y - next.x * point.y;
+    twiceArea += cross;
+    centroidX += (point.x + next.x) * cross;
+    centroidY += (point.y + next.y) * cross;
+  });
+  if (Math.abs(twiceArea) < 1) return null;
+  return {
+    sizeHectares: (Math.abs(twiceArea) / 2 / 10000).toFixed(3),
+    latitude: (centroidY / (3 * twiceArea) / earthRadius / radians).toFixed(7),
+    longitude: (centroidX / (3 * twiceArea) / earthRadius / longitudeScale / radians).toFixed(7),
+  };
+}
+
+function FarmBoundaryCapture({ onBoundary }: { onBoundary: (boundary: { sizeHectares: string; latitude: string; longitude: string } | null) => void }) {
+  const [points, setPoints] = useState<FarmCoordinate[]>([]);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState("");
+  const boundary = calculateFarmBoundary(points);
+  const previewPoints = points.map((point) => ({
+    x: point.longitude,
+    y: point.latitude,
+  }));
+  const minX = previewPoints.length ? Math.min(...previewPoints.map((point) => point.x)) : 0;
+  const maxX = previewPoints.length ? Math.max(...previewPoints.map((point) => point.x)) : 0;
+  const minY = previewPoints.length ? Math.min(...previewPoints.map((point) => point.y)) : 0;
+  const maxY = previewPoints.length ? Math.max(...previewPoints.map((point) => point.y)) : 0;
+  const pointString = previewPoints.map((point) => {
+    const x = 24 + ((point.x - minX) / (maxX - minX || 1)) * 272;
+    const y = 24 + ((maxY - point.y) / (maxY - minY || 1)) * 132;
+    return `${x},${y}`;
+  }).join(" ");
+
+  async function addBoundaryPoint() {
+    setBusy(true);
+    setError("");
+    try {
+      const nextPoints = [...points, await getCurrentCoordinates()];
+      const nextBoundary = calculateFarmBoundary(nextPoints);
+      setPoints(nextPoints);
+      onBoundary(nextBoundary);
+      if (nextPoints.length >= 3 && !nextBoundary) setError("Those points do not form a measurable area. Check that you recorded each corner once and in order.");
+    } catch (reason) {
+      setError(errorMessage(reason));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  function undoPoint() {
+    const nextPoints = points.slice(0, -1);
+    setPoints(nextPoints);
+    onBoundary(calculateFarmBoundary(nextPoints));
+    setError("");
+  }
+
+  function clearPoints() {
+    setPoints([]);
+    onBoundary(null);
+    setError("");
+  }
+
+  return <section className="rounded-lg border border-[#dce8dd] bg-white p-4">
+    <div className="eyebrow">Optional GPS tool</div>
+    <h2 className="mt-1 text-sm font-semibold">Measure the farm boundary</h2>
+    <p className="mt-1 text-[11px] leading-5 text-[var(--muted)]">Walk to each corner of the farm in order. Pause at a corner and record its GPS point; return to your starting corner after recording at least three points.</p>
+    <div className="mt-3 flex flex-wrap gap-2">
+      <button type="button" className="primary-button" disabled={busy} onClick={() => void addBoundaryPoint()}><MapPin size={14} />{busy ? "Waiting for browser permission…" : `Allow location and record corner ${points.length + 1}`}</button>
+      <button type="button" className="secondary-button" disabled={busy || points.length === 0} onClick={undoPoint}><RotateCcw size={13} />Undo last point</button>
+      <button type="button" className="secondary-button" disabled={busy || points.length === 0} onClick={clearPoints}>Clear boundary</button>
+    </div>
+    {points.length > 0 && <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px]">
+      <div className="overflow-hidden rounded-md border border-[var(--line)] bg-[#f8faf7]">
+        <svg viewBox="0 0 320 180" role="img" aria-label={`Farm boundary preview with ${points.length} recorded GPS points`} className="h-36 w-full">
+          {points.length >= 3 && <polygon points={pointString} fill="rgba(63,136,97,0.15)" stroke="#3f8861" strokeWidth="2" />}
+          {points.length > 1 && <polyline points={pointString} fill="none" stroke="#3f8861" strokeWidth="2" strokeDasharray={points.length >= 3 ? undefined : "5 4"} />}
+          {points.map((point, index) => {
+            const [x, y] = pointString.split(" ")[index].split(",");
+            return <g key={`${point.latitude}-${point.longitude}-${index}`}><circle cx={x} cy={y} r="5" fill={index === 0 ? "#d66b52" : "#153b2c"} /><text x={Number(x) + 7} y={Number(y) - 6} fontSize="9" fill="#344b3d">{index + 1}</text></g>;
+          })}
+        </svg>
+      </div>
+      <div className="flex flex-col justify-center gap-2 text-[11px]">
+        <span className="font-semibold">{points.length} corner{points.length === 1 ? "" : "s"} recorded</span>
+        {boundary ? <><span>Estimated area: <strong>{boundary.sizeHectares} ha</strong></span><span>Farm centre: {boundary.latitude}, {boundary.longitude}</span></> : <span className="text-[var(--muted)]">Record at least three non-collinear corners to calculate area.</span>}
+      </div>
+    </div>}
+    <p className="mt-3 text-[10px] leading-4 text-[var(--muted)]">The estimate uses the points in the order recorded. GPS accuracy varies; the boundary points are not saved by the server, only the resulting area and centre coordinates.</p>
+    {error && <p role="alert" className="mt-2 text-[10px] leading-4 text-[#a34e3d]">{error}</p>}
+  </section>;
+}
+
 function FarmLocationEditor({ id, session }: { id: string; session: SessionInfo }) {
   const [opened, setOpened] = useState(false);
   const [location, setLocation] = useState<Row | null>(null);
@@ -670,6 +832,7 @@ function FarmLocationEditor({ id, session }: { id: string; session: SessionInfo 
   const [states, setStates] = useState<Row[]>([]);
   const [lgas, setLgas] = useState<Row[]>([]);
   const [wards, setWards] = useState<Row[]>([]);
+  const [coordinates, setCoordinates] = useState({ latitude: "", longitude: "" });
   const [geographySelection, setGeographySelection] = useState<GeographyValues | null>(null);
   const selectedState = geographySelection?.state ?? String(location?.state_id ?? "");
   const selectedLga = geographySelection?.lga ?? String(location?.lga_id ?? "");
@@ -678,7 +841,11 @@ function FarmLocationEditor({ id, session }: { id: string; session: SessionInfo 
     if (!opened || location) return;
     let active = true;
     Promise.resolve().then(() => { if (active) setLoading(true); return apiRequest<Row>(`farms/farms/${id}/location`); })
-      .then((value) => { if (active) setLocation(value); })
+      .then((value) => {
+        if (!active) return;
+        setLocation(value);
+        setCoordinates({ latitude: String(value.latitude ?? ""), longitude: String(value.longitude ?? "") });
+      })
       .catch((reason: unknown) => { if (active) setError(reason); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
@@ -724,13 +891,21 @@ function FarmLocationEditor({ id, session }: { id: string; session: SessionInfo 
     const latitude = Number(values.latitude); const longitude = Number(values.longitude);
     if (values.latitude && (latitude < -90 || latitude > 90)) { setError("Latitude must be between -90 and 90."); setBusy(false); return; }
     if (values.longitude && (longitude < -180 || longitude > 180)) { setError("Longitude must be between -180 and 180."); setBusy(false); return; }
-    try { const saved = await apiRequest<Row>(`farms/farms/${id}/location`, { method: "PATCH", body: values }); setLocation(saved); setGeographySelection(null); setLgas([]); setWards([]); setMessage("Location saved."); }
+    try {
+      const saved = await apiRequest<Row>(`farms/farms/${id}/location`, { method: "PATCH", body: values });
+      setLocation(saved);
+      setCoordinates({ latitude: String(saved.latitude ?? ""), longitude: String(saved.longitude ?? "") });
+      setGeographySelection(null);
+      setLgas([]);
+      setWards([]);
+      setMessage("Location saved.");
+    }
     catch (reason) { setError(reason); }
     finally { setBusy(false); }
   }
 
-  return <section className="surface-panel mt-5 p-5 sm:p-6"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="eyebrow">Farm location</div><h2 className="mt-1 text-sm font-semibold">Address and coordinates</h2><p className="mt-1 text-[11px] text-[var(--muted)]">Location is saved separately; coordinates are optional and not device-verified.</p></div>{!opened && <button className="secondary-button" onClick={() => setOpened(true)}>Open location</button>}</div>
-    {opened && (loading ? <div className="mt-5"><LoadingState label="Loading farm location" /></div> : location && <form onSubmit={save} className="mt-5 grid gap-4 border-t border-[var(--line)] pt-5 sm:grid-cols-2"><label className="field-label sm:col-span-2">Address<input className="field-control" name="address" defaultValue={String(location.address ?? "")} /></label><label className="field-label">State<select className="field-control" name="state" value={selectedState} onChange={(event) => { setSelectedState(event.target.value); setSelectedLga(""); setSelectedWard(""); }}><option value="">Select state</option>{states.map((item) => <option key={String(item.id)} value={String(item.id)}>{display(item.name)}</option>)}</select></label><label className="field-label">LGA<select className="field-control" name="lga" value={selectedLga} disabled={!selectedState} onChange={(event) => { setSelectedLga(event.target.value); setSelectedWard(""); }}><option value="">Select LGA</option>{lgas.map((item) => <option key={String(item.id)} value={String(item.id)}>{display(item.name)}</option>)}</select></label><label className="field-label">Ward<select className="field-control" name="ward" value={selectedWard} disabled={!selectedLga} onChange={(event) => setSelectedWard(event.target.value)}><option value="">Select ward</option>{wards.map((item) => <option key={String(item.id)} value={String(item.id)}>{display(item.name)}</option>)}</select></label>{["community", "latitude", "longitude"].map((field) => <label key={field} className="field-label">{field.replaceAll("_", " ")}<input className="field-control" name={field} type={field === "latitude" || field === "longitude" ? "number" : "text"} step={field === "latitude" || field === "longitude" ? "any" : undefined} defaultValue={String(location[field] ?? "")} /></label>)}{Boolean(error) && <div className="sm:col-span-2"><ErrorPanel error={error} /></div>}{message && <p className="text-xs text-[#3e8057] sm:col-span-2">{message}</p>}<div className="flex justify-end sm:col-span-2">{hasPermission(session, "farm.update") && <button disabled={busy} className="primary-button">{busy ? "Saving…" : "Save location"}</button>}</div></form>)}
+  return <section className="surface-panel mt-5 p-5 sm:p-6"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="eyebrow">Farm location</div><h2 className="mt-1 text-sm font-semibold">Address and coordinates</h2><p className="mt-1 text-[11px] text-[var(--muted)]">Location is saved separately. GPS coordinates are optional and depend on browser permission and device accuracy.</p></div>{!opened && <button className="secondary-button" onClick={() => setOpened(true)}>Open location</button>}</div>
+    {opened && (loading ? <div className="mt-5"><LoadingState label="Loading farm location" /></div> : location && <form onSubmit={save} className="mt-5 grid gap-4 border-t border-[var(--line)] pt-5 sm:grid-cols-2"><label className="field-label sm:col-span-2">Address<input className="field-control" name="address" defaultValue={String(location.address ?? "")} /></label><label className="field-label">State<select className="field-control" name="state" value={selectedState} onChange={(event) => { setSelectedState(event.target.value); setSelectedLga(""); setSelectedWard(""); }}><option value="">Select state</option>{states.map((item) => <option key={String(item.id)} value={String(item.id)}>{display(item.name)}</option>)}</select></label><label className="field-label">LGA<select className="field-control" name="lga" value={selectedLga} disabled={!selectedState} onChange={(event) => { setSelectedLga(event.target.value); setSelectedWard(""); }}><option value="">Select LGA</option>{lgas.map((item) => <option key={String(item.id)} value={String(item.id)}>{display(item.name)}</option>)}</select></label><label className="field-label">Ward<select className="field-control" name="ward" value={selectedWard} disabled={!selectedLga} onChange={(event) => setSelectedWard(event.target.value)}><option value="">Select ward</option>{wards.map((item) => <option key={String(item.id)} value={String(item.id)}>{display(item.name)}</option>)}</select></label><div className="sm:col-span-2">{hasPermission(session, "farm.update") && <CurrentLocationCapture onCoordinates={(value) => setCoordinates({ latitude: value.latitude.toFixed(7), longitude: value.longitude.toFixed(7) })} />}</div>{["community", "latitude", "longitude"].map((field) => <label key={field} className="field-label">{field.replaceAll("_", " ")}<input className="field-control" name={field} type={field === "latitude" || field === "longitude" ? "number" : "text"} step={field === "latitude" || field === "longitude" ? "any" : undefined} value={field === "latitude" || field === "longitude" ? coordinates[field] : String(location[field] ?? "")} onChange={(event) => field === "latitude" || field === "longitude" ? setCoordinates((current) => ({ ...current, [field]: event.target.value })) : undefined} /></label>)}{Boolean(error) && <div className="sm:col-span-2"><ErrorPanel error={error} /></div>}{message && <p className="text-xs text-[#3e8057] sm:col-span-2">{message}</p>}<div className="flex justify-end sm:col-span-2">{hasPermission(session, "farm.update") && <button disabled={busy} className="primary-button">{busy ? "Saving…" : "Save location"}</button>}</div></form>)}
     {Boolean(error) && !location && <div className="mt-4"><ErrorPanel error={error} /></div>}
   </section>;
 }

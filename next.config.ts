@@ -9,7 +9,7 @@ const nextConfig: NextConfig = {
   /* config options here */
   cacheComponents: true,
   partialPrefetching: true,
-  allowedDevOrigins: ["127.0.0.1", "localhost", ...additionalDevOrigins],
+  allowedDevOrigins: ["127.0.0.1", "localhost", '192.168.11.26', ...additionalDevOrigins],
   images: {
     remotePatterns: [{ protocol: "https", hostname: "images.unsplash.com" }],
   },
