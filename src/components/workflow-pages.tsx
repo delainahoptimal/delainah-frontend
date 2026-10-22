@@ -804,6 +804,7 @@ function FarmerFarms({ id, session }: { id: string; session: SessionInfo }) {
 }
 
 function FarmDetail({ id, session, onToast }: { id: string; session: SessionInfo; onToast: (message: string) => void }) {
+  const [boundaryRefresh, setBoundaryRefresh] = useState(0);
   const editableFields: Field[] = [
     { name: "name", label: "Farm name" }, { name: "size_hectares", label: "Size in hectares", type: "number" },
     { name: "tenure_type", label: "Tenure", options: ["OWNED", "LEASED", "COMMUNAL", "OTHER"] },
@@ -815,7 +816,7 @@ function FarmDetail({ id, session, onToast }: { id: string; session: SessionInfo
     { label: "Deactivate", permission: "farm.archive", path: (key) => `farms/farms/${key}/status/deactivate`, body: (reason) => ({ reason }), reasonLabel: "Reason for deactivation", tone: "danger" },
     { label: "Suspend", permission: "farm.suspend", path: (key) => `farms/farms/${key}/status/suspend`, body: (reason) => ({ reason }), reasonLabel: "Reason for suspension", tone: "danger" },
   ];
-  return <><RecordDetail id={id} title="Farm detail" eyebrow="Land / Farm record" endpoint={`farms/farms/${id}`} historyPath={`farms/farms/${id}/history`} session={session} actions={actions} onToast={onToast} editableFields={editableFields} editPermission="farm.update" /><FarmLocationEditor id={id} session={session} /><SignedUploadPanel title="Farm land images" listPath={`farms/farms/${id}/images`} startPath={`farms/farms/${id}/images`} completePath={(imageId) => `farms/farms/${id}/images/${imageId}/complete`} session={session} permission="farm.update" accept="image/jpeg,image/png,image/webp" multiple /></>;
+  return <><RecordDetail key={boundaryRefresh} id={id} title="Farm detail" eyebrow="Land / Farm record" endpoint={`farms/farms/${id}`} historyPath={`farms/farms/${id}/history`} session={session} actions={actions} onToast={onToast} editableFields={editableFields} editPermission="farm.update" /><FarmLocationEditor id={id} session={session} onBoundarySaved={() => setBoundaryRefresh((value) => value + 1)} /><SignedUploadPanel title="Farm land images" listPath={`farms/farms/${id}/images`} startPath={`farms/farms/${id}/images`} completePath={(imageId) => `farms/farms/${id}/images/${imageId}/complete`} session={session} permission="farm.update" accept="image/jpeg,image/png,image/webp" multiple /></>;
 }
 
 function getCurrentCoordinates(): Promise<FarmCoordinate> {
@@ -898,10 +899,11 @@ function createFarmBoundaryGeometry(points: FarmCoordinate[]): FarmBoundaryGeome
   return { type: "Polygon", coordinates: [ring] };
 }
 
-function FarmBoundaryCapture({ onBoundary }: { onBoundary: (boundary: { sizeHectares: string; latitude: string; longitude: string; geometry: FarmBoundaryGeometry } | null) => void }) {
+function FarmBoundaryCapture({ onBoundary, hasSavedBoundary = false }: { onBoundary: (boundary: { sizeHectares: string; latitude: string; longitude: string; geometry: FarmBoundaryGeometry } | null, clearRequested?: boolean) => void; hasSavedBoundary?: boolean }) {
   const [points, setPoints] = useState<FarmCoordinate[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
+  const [replacing, setReplacing] = useState(!hasSavedBoundary);
   const boundary = calculateFarmBoundary(points);
   const previewPoints = points.map((point) => ({
     x: point.longitude,
@@ -918,6 +920,7 @@ function FarmBoundaryCapture({ onBoundary }: { onBoundary: (boundary: { sizeHect
   }).join(" ");
 
   async function addBoundaryPoint() {
+    if (!replacing) return;
     setBusy(true);
     setError("");
     try {
@@ -935,6 +938,7 @@ function FarmBoundaryCapture({ onBoundary }: { onBoundary: (boundary: { sizeHect
   }
 
   function undoPoint() {
+    if (!replacing) return;
     const nextPoints = points.slice(0, -1);
     const nextBoundary = calculateFarmBoundary(nextPoints);
     const geometry = nextBoundary ? createFarmBoundaryGeometry(nextPoints) : null;
@@ -943,20 +947,16 @@ function FarmBoundaryCapture({ onBoundary }: { onBoundary: (boundary: { sizeHect
     setError("");
   }
 
-  function clearPoints() {
-    setPoints([]);
-    onBoundary(null);
-    setError("");
-  }
-
   return <section className="rounded-lg border border-[#dce8dd] bg-white p-4">
     <div className="eyebrow">Optional GPS tool</div>
     <h2 className="mt-1 text-sm font-semibold">Measure the farm boundary</h2>
     <p className="mt-1 text-[11px] leading-5 text-[var(--muted)]">Walk to each corner of the farm in order. Pause at a corner and record its GPS point; return to your starting corner after recording at least three points.</p>
+    {hasSavedBoundary && !replacing && <p className="mt-3 rounded-md bg-[#edf3ee] px-3 py-2 text-[10px] leading-4 text-[#52675a]">The saved boundary is shown above. Replace it only if you want to record a new perimeter.</p>}
     <div className="mt-3 flex flex-wrap gap-2">
-      <button type="button" className="primary-button" disabled={busy} onClick={() => void addBoundaryPoint()}><MapPin size={14} />{busy ? "Waiting for browser permission…" : `Allow location and record corner ${points.length + 1}`}</button>
-      <button type="button" className="secondary-button" disabled={busy || points.length === 0} onClick={undoPoint}><RotateCcw size={13} />Undo last point</button>
-      <button type="button" className="secondary-button" disabled={busy || points.length === 0} onClick={clearPoints}>Clear boundary</button>
+      {replacing
+        ? <button type="button" className="primary-button" disabled={busy} onClick={() => void addBoundaryPoint()}><MapPin size={14} />{busy ? "Waiting for browser permission…" : `Allow location and record corner ${points.length + 1}`}</button>
+        : <button type="button" className="secondary-button" disabled={busy} onClick={() => { setPoints([]); setReplacing(true); onBoundary(null, false); }}>Replace saved boundary</button>}
+      {replacing && <><button type="button" className="secondary-button" disabled={busy || points.length === 0} onClick={undoPoint}><RotateCcw size={13} />Undo last point</button><button type="button" className="secondary-button" disabled={busy || points.length === 0} onClick={() => { setPoints([]); onBoundary(null, true); setError(""); }}>Clear boundary</button></>}
     </div>
     {points.length > 0 && <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_180px]">
       <div className="overflow-hidden rounded-md border border-[var(--line)] bg-[#f8faf7]">
@@ -974,7 +974,7 @@ function FarmBoundaryCapture({ onBoundary }: { onBoundary: (boundary: { sizeHect
         {boundary ? <><span>Estimated area: <strong>{boundary.sizeHectares} ha</strong></span><span>Farm centre: {boundary.latitude}, {boundary.longitude}</span></> : <span className="text-[var(--muted)]">Record at least three non-collinear corners to calculate area.</span>}
       </div>
     </div>}
-    <p className="mt-3 text-[10px] leading-4 text-[var(--muted)]">The estimate uses the points in the order recorded. GPS accuracy varies; the boundary points are not saved by the server, only the resulting area and centre coordinates.</p>
+    <p className="mt-3 text-[10px] leading-4 text-[var(--muted)]">The estimate uses the points in the order recorded. GPS accuracy varies; points are saved only after you choose Save farm boundary.</p>
     {error && <p role="alert" className="mt-2 text-[10px] leading-4 text-[#a34e3d]">{error}</p>}
   </section>;
 }
@@ -996,7 +996,64 @@ function isFarmBoundaryGeometry(value: unknown): value is FarmBoundaryGeometry {
   );
 }
 
-function FarmLocationEditor({ id, session }: { id: string; session: SessionInfo }) {
+function FarmBoundaryEditor({ id, session, onSaved }: { id: string; session: SessionInfo; onSaved: () => void }) {
+  const [savedBoundary, setSavedBoundary] = useState<FarmBoundaryGeometry | null>(null);
+  const [draft, setDraft] = useState<{ sizeHectares: string; latitude: string; longitude: string; geometry: FarmBoundaryGeometry } | null>(null);
+  const [clearRequested, setClearRequested] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState<unknown>(null);
+  const [message, setMessage] = useState("");
+  const canUpdate = hasPermission(session, "farm.update");
+
+  useEffect(() => {
+    let active = true;
+    apiRequest<Row>(`farms/farms/${id}`)
+      .then((farm) => {
+        if (active) setSavedBoundary(isFarmBoundaryGeometry(farm.boundary) ? farm.boundary : null);
+      })
+      .catch((reason: unknown) => { if (active) setError(reason); })
+      .finally(() => { if (active) setLoading(false); });
+    return () => { active = false; };
+  }, [id]);
+
+  async function saveBoundary() {
+    if (!canUpdate || (!draft && !clearRequested)) return;
+    setBusy(true);
+    setError(null);
+    setMessage("");
+    const body: Row = draft
+      ? { boundary: draft.geometry, size_hectares: draft.sizeHectares, latitude: draft.latitude, longitude: draft.longitude }
+      : { boundary: null };
+    try {
+      const saved = await apiRequest<Row>(`farms/farms/${id}`, { method: "PATCH", body });
+      setSavedBoundary(isFarmBoundaryGeometry(saved.boundary) ? saved.boundary : null);
+      setDraft(null);
+      setClearRequested(false);
+      setMessage("Farm boundary saved.");
+      onSaved();
+    } catch (reason) {
+      setError(reason);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <section className="surface-panel mt-5 p-5 sm:p-6">
+    <div className="eyebrow">Farm boundary</div>
+    <h2 className="mt-1 text-sm font-semibold">Measure or update the farm outline</h2>
+    <p className="mt-1 text-[11px] leading-5 text-[var(--muted)]">The outline is saved separately from the address and coordinates. Saving a measured boundary also updates farm area and centre coordinates.</p>
+    {loading ? <div className="mt-4"><LoadingState label="Loading saved farm boundary" /></div> : <>
+      {savedBoundary && <div className="mt-4"><div className="text-xs font-semibold">Current saved outline</div><FarmBoundaryMap geometry={savedBoundary} /></div>}
+      {canUpdate && <div className="mt-4"><FarmBoundaryCapture key={JSON.stringify(savedBoundary)} hasSavedBoundary={Boolean(savedBoundary)} onBoundary={(value, clear) => { setDraft(value); setClearRequested(Boolean(clear)); setMessage(""); }} /></div>}
+      {Boolean(error) && <div className="mt-4"><ErrorPanel error={error} /></div>}
+      {message && <p role="status" className="mt-3 text-xs text-[#3e8057]">{message}</p>}
+      {canUpdate && <div className="mt-4 flex justify-end"><button type="button" className="primary-button" disabled={busy || (!draft && !clearRequested)} onClick={() => void saveBoundary()}>{busy ? "Saving boundary…" : "Save farm boundary"}</button></div>}
+    </>}
+  </section>;
+}
+
+function FarmLocationEditor({ id, session, onBoundarySaved }: { id: string; session: SessionInfo; onBoundarySaved: () => void }) {
   const [opened, setOpened] = useState(false);
   const [location, setLocation] = useState<Row | null>(null);
   const [loading, setLoading] = useState(false);
@@ -1078,8 +1135,11 @@ function FarmLocationEditor({ id, session }: { id: string; session: SessionInfo 
     finally { setBusy(false); }
   }
 
+  const locationMapUrl = location ? farmMapUrl(location.latitude, location.longitude) : null;
   return <section className="surface-panel mt-5 p-5 sm:p-6"><div className="flex flex-wrap items-center justify-between gap-3"><div><div className="eyebrow">Farm location</div><h2 className="mt-1 text-sm font-semibold">Address and coordinates</h2><p className="mt-1 text-[11px] text-[var(--muted)]">Location is saved separately. GPS coordinates are optional and depend on browser permission and device accuracy.</p></div>{!opened && <button className="secondary-button" onClick={() => setOpened(true)}>Open location</button>}</div>
+    {opened && location && locationMapUrl && <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] pt-4"><div><div className="text-xs font-semibold">Saved location coordinates</div><p className="mono mt-1 text-[10px] text-[var(--muted)]">{String(location.latitude)}, {String(location.longitude)}</p></div><a className="secondary-button" href={locationMapUrl} target="_blank" rel="noopener noreferrer"><MapPin size={14} />View farm on map</a></div>}
     {opened && (loading ? <div className="mt-5"><LoadingState label="Loading farm location" /></div> : location && <form onSubmit={save} className="mt-5 grid gap-4 border-t border-[var(--line)] pt-5 sm:grid-cols-2"><label className="field-label sm:col-span-2">Address<input className="field-control" name="address" defaultValue={String(location.address ?? "")} /></label><label className="field-label">State<select className="field-control" name="state" value={selectedState} onChange={(event) => { setSelectedState(event.target.value); setSelectedLga(""); setSelectedWard(""); }}><option value="">Select state</option>{states.map((item) => <option key={String(item.id)} value={String(item.id)}>{display(item.name)}</option>)}</select></label><label className="field-label">LGA<select className="field-control" name="lga" value={selectedLga} disabled={!selectedState} onChange={(event) => { setSelectedLga(event.target.value); setSelectedWard(""); }}><option value="">Select LGA</option>{lgas.map((item) => <option key={String(item.id)} value={String(item.id)}>{display(item.name)}</option>)}</select></label><label className="field-label">Ward<select className="field-control" name="ward" value={selectedWard} disabled={!selectedLga} onChange={(event) => setSelectedWard(event.target.value)}><option value="">Select ward</option>{wards.map((item) => <option key={String(item.id)} value={String(item.id)}>{display(item.name)}</option>)}</select></label><div className="sm:col-span-2">{hasPermission(session, "farm.update") && <CurrentLocationCapture onCoordinates={(value) => setCoordinates({ latitude: value.latitude.toFixed(7), longitude: value.longitude.toFixed(7) })} />}</div>{["community", "latitude", "longitude"].map((field) => <label key={field} className="field-label">{field.replaceAll("_", " ")}<input className="field-control" name={field} type={field === "latitude" || field === "longitude" ? "number" : "text"} step={field === "latitude" || field === "longitude" ? "any" : undefined} value={field === "latitude" || field === "longitude" ? coordinates[field] : String(location[field] ?? "")} onChange={(event) => field === "latitude" || field === "longitude" ? setCoordinates((current) => ({ ...current, [field]: event.target.value })) : undefined} /></label>)}{Boolean(error) && <div className="sm:col-span-2"><ErrorPanel error={error} /></div>}{message && <p className="text-xs text-[#3e8057] sm:col-span-2">{message}</p>}<div className="flex justify-end sm:col-span-2">{hasPermission(session, "farm.update") && <button disabled={busy} className="primary-button">{busy ? "Saving…" : "Save location"}</button>}</div></form>)}
+    {opened && !loading && location && <FarmBoundaryEditor id={id} session={session} onSaved={onBoundarySaved} />}
     {Boolean(error) && !location && <div className="mt-4"><ErrorPanel error={error} /></div>}
   </section>;
 }
@@ -1323,8 +1383,15 @@ function RecordDetail({ id, title, eyebrow, endpoint, historyPath, session, acti
       <section className="surface-panel p-5 sm:p-7"><div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--line)] pb-4"><div><div className="mono text-[10px] text-[var(--muted)]">{id}</div><h2 className="mt-1 text-lg font-semibold">{display(record.name ?? record.first_name ?? record.report_reference ?? record.file_name ?? record.email ?? title)}</h2></div><div className="flex items-center gap-2">{Boolean(record.status) && <span className={`status-pill ${statusClass(currentStatus)}`}>{currentStatus.replaceAll("_", " ")}</span>}{canEdit && <button className="secondary-button !min-h-8" onClick={() => { setEditError(null); setEditing((value) => !value); }}>{editing ? "Close editor" : "Edit details"}</button>}</div></div>
         {endpoint.startsWith("farmers/farmers/") && <div className="mt-4 flex flex-wrap gap-2"><span className={`status-pill ${record.account_active ? "status-good" : "status-bad"}`}>Account {record.account_active ? "active" : "inactive"}</span><span className={`status-pill ${record.farmer_verified ? "status-good" : "status-wait"}`}>Farmer {record.farmer_verified ? "verified" : "not verified"}</span></div>}
         <dl className="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-2">{fields.filter(([key]) => !(endpoint.startsWith("farmers/farmers/") && ["account_active", "farmer_verified"].includes(key)) && !(endpoint.startsWith("farm-crops/farm-crops/") && ["farm", "crop", "season"].includes(key))).map(([key, value]) => { const empty = value === null || value === ""; return <div key={key} className="min-w-0"><dt className="detail-label">{key.replaceAll("_", " ")}</dt><dd className={`detail-value ${empty ? "detail-value-empty" : ""}`}>{empty ? "Not provided" : display(value)}</dd></div>; })}</dl>
-        {savedFarmBoundary && <div className="mt-5 border-t border-[var(--line)] pt-4"><div className="text-xs font-semibold">Saved farm boundary</div><p className="mt-1 text-[10px] leading-4 text-[var(--muted)]">Open the map to view the saved field outline. Map tiles load from OpenStreetMap only after you open the map.</p><FarmBoundaryMap geometry={savedFarmBoundary} /></div>}
-        {savedFarmMapUrl && <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] pt-4"><div><div className="text-xs font-semibold">Saved farm coordinates</div><p className="mono mt-1 text-[10px] text-[var(--muted)]">{String(record.latitude)}, {String(record.longitude)}</p></div><a className="secondary-button" href={savedFarmMapUrl} target="_blank" rel="noopener noreferrer"><MapPin size={14} />View farm on map</a></div>}
+        {endpoint.startsWith("farms/farms/") && <div className="mt-5 border-t border-[var(--line)] pt-4">
+          <div className="text-xs font-semibold">Farm map</div>
+          {savedFarmBoundary
+            ? <><p className="mt-1 text-[10px] leading-4 text-[var(--muted)]">Open the map to view the saved field outline. Map tiles load from OpenStreetMap only after you open the map.</p><FarmBoundaryMap geometry={savedFarmBoundary} /></>
+            : <p className="mt-1 text-[10px] leading-4 text-[var(--muted)]">No farm boundary is saved yet. Open Farm location below, then use Measure or update the farm outline to record and save the perimeter.</p>}
+          {savedFarmMapUrl
+            ? <div className="mt-3 flex flex-wrap items-center justify-between gap-3"><div><div className="text-[10px] font-semibold">Farm centre coordinates</div><p className="mono mt-1 text-[10px] text-[var(--muted)]">{String(record.latitude)}, {String(record.longitude)}</p></div><a className="secondary-button" href={savedFarmMapUrl} target="_blank" rel="noopener noreferrer"><MapPin size={14} />View farm on map</a></div>
+            : <p className="mt-2 text-[10px] leading-4 text-[var(--muted)]">No farm centre coordinates are saved on this farm record yet. Coordinates saved under Farm location are shown there separately.</p>}
+        </div>}
         {editing && canEdit && <form onSubmit={saveRecord} className="mt-5 grid gap-4 border-t border-[var(--line)] pt-5 sm:grid-cols-2">
           {editableFields.map((field) => <label key={field.name} className={`field-label ${field.wide ? "sm:col-span-2" : ""}`}>{field.label}{field.options ? <select className="field-control" name={field.name} defaultValue={String(record[field.name] ?? "")}><option value="">Select…</option>{field.options.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "textarea" ? <textarea className="field-control min-h-[80px] py-2.5" name={field.name} defaultValue={String(record[field.name] ?? "")} /> : <input className="field-control" name={field.name} type={field.type ?? "text"} defaultValue={String(record[field.name] ?? "")} />}</label>)}
           {geographyFields && <GeographySelects values={geography} onChange={setGeography} />}
