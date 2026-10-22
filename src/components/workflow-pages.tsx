@@ -6,6 +6,7 @@ import {
 } from "lucide-react";
 import Image from "next/image";
 import Link from "next/link";
+import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useState } from "react";
 import type { Page, SessionUser } from "@/lib/api";
@@ -19,6 +20,7 @@ type SessionInfo = { user: SessionUser; permissions: string[]; roles: unknown[];
 type LookupKind = "farmers" | "farms" | "seasons" | "crops" | "farmCrops" | "staffUsers";
 type GeographyValues = { state: string; lga: string; ward: string };
 type FarmCoordinate = { latitude: number; longitude: number };
+type FarmBoundaryGeometry = { type: "Polygon"; coordinates: number[][][] };
 type Field = { name: string; label: string; type?: string; required?: boolean; options?: string[]; lookup?: LookupKind; dependsOn?: string; placeholder?: string; hint?: string; wide?: boolean };
 type Column = { key: string; label: string; mono?: boolean; status?: boolean };
 type Action = { label: string; permission: string; path: (id: string) => string; method?: "POST" | "PATCH" | "DELETE"; body?: (reason: string) => Row; reasonLabel?: string; states?: string[]; registrationSource?: string; tone?: "danger" };
@@ -27,6 +29,11 @@ type Resource = {
   fields?: Field[]; createPermission?: string; detailHref?: string; searchHint?: string;
   statusFilter?: string[]; defaultStatus?: string; filters?: Field[]; paginated?: boolean; empty?: string;
 };
+
+const FarmBoundaryMap = dynamic(() => import("@/components/farm-boundary-map"), {
+  ssr: false,
+  loading: () => <div className="mt-3 grid h-72 place-items-center rounded-lg border border-[var(--line)] bg-[#f8faf7] text-xs text-[var(--muted)]">Loading farm map…</div>,
+});
 
 const farmerStatuses = ["DRAFT", "PENDING_VERIFICATION", "VERIFIED", "ACTIVE", "SUSPENDED", "REJECTED", "RETURNED", "INACTIVE"];
 const kycStatuses = ["DRAFT", "SUBMITTED", "VERIFIED", "REJECTED", "RETURNED"];
@@ -462,6 +469,7 @@ function CreatePage({ resource, session, onToast }: { resource: Resource; sessio
   const [selectedState, setSelectedState] = useState("");
   const [selectedLga, setSelectedLga] = useState("");
   const [fieldValues, setFieldValues] = useState<Record<string, string>>({});
+  const [farmBoundary, setFarmBoundary] = useState<FarmBoundaryGeometry | null>(null);
   const [fieldOfficerRegionsReady, setFieldOfficerRegionsReady] = useState(false);
   const canCreate = hasPermission(session, resource.createPermission);
 
@@ -484,6 +492,7 @@ function CreatePage({ resource, session, onToast }: { resource: Resource; sessio
     setError(null);
     const form = new FormData(event.currentTarget);
     const body = Object.fromEntries([...form.entries()].filter(([, value]) => String(value).trim() !== "")) as Row;
+    if (resource === resources.farms && farmBoundary) body.boundary = farmBoundary;
     if (typeof body.region_lgas === "string") body.region_lgas = JSON.parse(body.region_lgas) as string[];
     if ((body.latitude && !body.longitude) || (!body.latitude && body.longitude)) { setError("Enter both latitude and longitude, or leave both blank."); setBusy(false); return; }
     if (body.latitude && (Number(body.latitude) < -90 || Number(body.latitude) > 90)) { setError("Latitude must be between -90 and 90."); setBusy(false); return; }
@@ -553,12 +562,15 @@ function CreatePage({ resource, session, onToast }: { resource: Resource; sessio
         ? <div key={field.name}>{formField}<Link href="/farmers/new" className="field-hint mt-2 inline-flex font-semibold text-[#a34e3d] underline">Farmer not listed? Create a new farmer</Link></div>
         : <div key={field.name}>{formField}</div>;
     })}</div>
-      {resource === resources.farms && <div className="sm:col-span-2"><FarmBoundaryCapture onBoundary={(boundary) => setFieldValues((current) => ({
-        ...current,
-        size_hectares: boundary?.sizeHectares ?? "",
-        latitude: boundary?.latitude ?? "",
-        longitude: boundary?.longitude ?? "",
-      }))} /><div className="mt-4"><CurrentLocationCapture onCoordinates={(coordinates) => setFieldValues((current) => ({
+      {resource === resources.farms && <div className="sm:col-span-2"><FarmBoundaryCapture onBoundary={(boundary) => {
+        setFarmBoundary(boundary?.geometry ?? null);
+        setFieldValues((current) => ({
+          ...current,
+          size_hectares: boundary?.sizeHectares ?? "",
+          latitude: boundary?.latitude ?? "",
+          longitude: boundary?.longitude ?? "",
+        }));
+      }} /><div className="mt-4"><CurrentLocationCapture onCoordinates={(coordinates) => setFieldValues((current) => ({
         ...current,
         latitude: coordinates.latitude.toFixed(7),
         longitude: coordinates.longitude.toFixed(7),
@@ -879,7 +891,14 @@ function calculateFarmBoundary(points: FarmCoordinate[]) {
   };
 }
 
-function FarmBoundaryCapture({ onBoundary }: { onBoundary: (boundary: { sizeHectares: string; latitude: string; longitude: string } | null) => void }) {
+function createFarmBoundaryGeometry(points: FarmCoordinate[]): FarmBoundaryGeometry | null {
+  if (points.length < 3) return null;
+  const ring = points.map((point) => [point.longitude, point.latitude]);
+  ring.push([points[0].longitude, points[0].latitude]);
+  return { type: "Polygon", coordinates: [ring] };
+}
+
+function FarmBoundaryCapture({ onBoundary }: { onBoundary: (boundary: { sizeHectares: string; latitude: string; longitude: string; geometry: FarmBoundaryGeometry } | null) => void }) {
   const [points, setPoints] = useState<FarmCoordinate[]>([]);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState("");
@@ -905,7 +924,8 @@ function FarmBoundaryCapture({ onBoundary }: { onBoundary: (boundary: { sizeHect
       const nextPoints = [...points, await getCurrentCoordinates()];
       const nextBoundary = calculateFarmBoundary(nextPoints);
       setPoints(nextPoints);
-      onBoundary(nextBoundary);
+      const geometry = nextBoundary ? createFarmBoundaryGeometry(nextPoints) : null;
+      onBoundary(nextBoundary && geometry ? { ...nextBoundary, geometry } : null);
       if (nextPoints.length >= 3 && !nextBoundary) setError("Those points do not form a measurable area. Check that you recorded each corner once and in order.");
     } catch (reason) {
       setError(errorMessage(reason));
@@ -916,8 +936,10 @@ function FarmBoundaryCapture({ onBoundary }: { onBoundary: (boundary: { sizeHect
 
   function undoPoint() {
     const nextPoints = points.slice(0, -1);
+    const nextBoundary = calculateFarmBoundary(nextPoints);
+    const geometry = nextBoundary ? createFarmBoundaryGeometry(nextPoints) : null;
     setPoints(nextPoints);
-    onBoundary(calculateFarmBoundary(nextPoints));
+    onBoundary(nextBoundary && geometry ? { ...nextBoundary, geometry } : null);
     setError("");
   }
 
@@ -955,6 +977,23 @@ function FarmBoundaryCapture({ onBoundary }: { onBoundary: (boundary: { sizeHect
     <p className="mt-3 text-[10px] leading-4 text-[var(--muted)]">The estimate uses the points in the order recorded. GPS accuracy varies; the boundary points are not saved by the server, only the resulting area and centre coordinates.</p>
     {error && <p role="alert" className="mt-2 text-[10px] leading-4 text-[#a34e3d]">{error}</p>}
   </section>;
+}
+
+function farmMapUrl(latitude: unknown, longitude: unknown) {
+  const lat = Number(latitude);
+  const lon = Number(longitude);
+  if (latitude === null || latitude === undefined || latitude === "" || longitude === null || longitude === undefined || longitude === "") return null;
+  if (!Number.isFinite(lat) || !Number.isFinite(lon) || lat < -90 || lat > 90 || lon < -180 || lon > 180) return null;
+  return `https://www.openstreetmap.org/?mlat=${lat}&mlon=${lon}#map=17/${lat}/${lon}`;
+}
+
+function isFarmBoundaryGeometry(value: unknown): value is FarmBoundaryGeometry {
+  if (!value || typeof value !== "object" || !("type" in value) || value.type !== "Polygon" || !("coordinates" in value) || !Array.isArray(value.coordinates)) return false;
+  return value.coordinates.length > 0 && value.coordinates.every((ring) =>
+    Array.isArray(ring) && ring.every((point) =>
+      Array.isArray(point) && point.length === 2 && point.every((coordinate) => typeof coordinate === "number" && Number.isFinite(coordinate)),
+    ),
+  );
 }
 
 function FarmLocationEditor({ id, session }: { id: string; session: SessionInfo }) {
@@ -1274,6 +1313,8 @@ function RecordDetail({ id, title, eyebrow, endpoint, historyPath, session, acti
   const availableActions = actions.filter((action) => hasPermission(session, action.permission) && !(endpoint.startsWith("farmers/farmers/") && hasRole(session, "FIELD_OFFICER") && action.label === "Activate") && (!action.states || action.states.includes(currentStatus)) && (!action.registrationSource || record.registration_source === action.registrationSource) && !(isOwnKyc && ["kyc.verify", "kyc.return", "kyc.reject"].includes(action.permission)) && !(isOwnReport && ["field_report.review", "field_report.approve"].includes(action.permission)));
   const canEdit = editableFields.length > 0 && hasPermission(session, editPermission) && (!editStates || editStates.includes(currentStatus));
   const fields = Object.entries(record).filter(([key, value]) => (key === "region_lgas" && Array.isArray(value)) || (key !== "id" && key !== "field_officer_signed_by" && !key.endsWith("_id") && !(typeof value === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(value)) && !["documents", "history", "events", "metadata"].includes(key) && !key.toLowerCase().includes("url") && (value === null || typeof value !== "object")));
+  const savedFarmMapUrl = endpoint.startsWith("farms/farms/") ? farmMapUrl(record.latitude, record.longitude) : null;
+  const savedFarmBoundary = endpoint.startsWith("farms/farms/") && isFarmBoundaryGeometry(record.boundary) ? record.boundary : null;
   const documents = Array.isArray(record.documents) ? record.documents as Row[] : [];
   const events = history && typeof history === "object" && "events" in history ? (history as { events: Row[] }).events : [];
 
@@ -1282,6 +1323,8 @@ function RecordDetail({ id, title, eyebrow, endpoint, historyPath, session, acti
       <section className="surface-panel p-5 sm:p-7"><div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--line)] pb-4"><div><div className="mono text-[10px] text-[var(--muted)]">{id}</div><h2 className="mt-1 text-lg font-semibold">{display(record.name ?? record.first_name ?? record.report_reference ?? record.file_name ?? record.email ?? title)}</h2></div><div className="flex items-center gap-2">{Boolean(record.status) && <span className={`status-pill ${statusClass(currentStatus)}`}>{currentStatus.replaceAll("_", " ")}</span>}{canEdit && <button className="secondary-button !min-h-8" onClick={() => { setEditError(null); setEditing((value) => !value); }}>{editing ? "Close editor" : "Edit details"}</button>}</div></div>
         {endpoint.startsWith("farmers/farmers/") && <div className="mt-4 flex flex-wrap gap-2"><span className={`status-pill ${record.account_active ? "status-good" : "status-bad"}`}>Account {record.account_active ? "active" : "inactive"}</span><span className={`status-pill ${record.farmer_verified ? "status-good" : "status-wait"}`}>Farmer {record.farmer_verified ? "verified" : "not verified"}</span></div>}
         <dl className="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-2">{fields.filter(([key]) => !(endpoint.startsWith("farmers/farmers/") && ["account_active", "farmer_verified"].includes(key)) && !(endpoint.startsWith("farm-crops/farm-crops/") && ["farm", "crop", "season"].includes(key))).map(([key, value]) => { const empty = value === null || value === ""; return <div key={key} className="min-w-0"><dt className="detail-label">{key.replaceAll("_", " ")}</dt><dd className={`detail-value ${empty ? "detail-value-empty" : ""}`}>{empty ? "Not provided" : display(value)}</dd></div>; })}</dl>
+        {savedFarmBoundary && <div className="mt-5 border-t border-[var(--line)] pt-4"><div className="text-xs font-semibold">Saved farm boundary</div><p className="mt-1 text-[10px] leading-4 text-[var(--muted)]">Open the map to view the saved field outline. Map tiles load from OpenStreetMap only after you open the map.</p><FarmBoundaryMap geometry={savedFarmBoundary} /></div>}
+        {savedFarmMapUrl && <div className="mt-5 flex flex-wrap items-center justify-between gap-3 border-t border-[var(--line)] pt-4"><div><div className="text-xs font-semibold">Saved farm coordinates</div><p className="mono mt-1 text-[10px] text-[var(--muted)]">{String(record.latitude)}, {String(record.longitude)}</p></div><a className="secondary-button" href={savedFarmMapUrl} target="_blank" rel="noopener noreferrer"><MapPin size={14} />View farm on map</a></div>}
         {editing && canEdit && <form onSubmit={saveRecord} className="mt-5 grid gap-4 border-t border-[var(--line)] pt-5 sm:grid-cols-2">
           {editableFields.map((field) => <label key={field.name} className={`field-label ${field.wide ? "sm:col-span-2" : ""}`}>{field.label}{field.options ? <select className="field-control" name={field.name} defaultValue={String(record[field.name] ?? "")}><option value="">Select…</option>{field.options.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "textarea" ? <textarea className="field-control min-h-[80px] py-2.5" name={field.name} defaultValue={String(record[field.name] ?? "")} /> : <input className="field-control" name={field.name} type={field.type ?? "text"} defaultValue={String(record[field.name] ?? "")} />}</label>)}
           {geographyFields && <GeographySelects values={geography} onChange={setGeography} />}
