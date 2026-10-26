@@ -1,5 +1,6 @@
 "use client";
 
+import Image from "next/image";
 import {
   Activity,
   ArrowRight,
@@ -199,8 +200,8 @@ export default function ConsoleApp() {
       <aside className={`fixed inset-y-0 left-0 z-40 flex w-[258px] flex-col bg-[var(--forest)] text-white transition-transform lg:static lg:translate-x-0 ${mobileNavOpen ? "translate-x-0" : "-translate-x-full"}`}>
         <div className="flex h-[76px] items-center justify-between border-b border-white/10 px-6">
           <Link href="/overview" className="flex items-center gap-3" onClick={() => setMobileNavOpen(false)}>
-            <span className="grid h-9 w-9 place-items-center rounded-xl bg-[var(--lime)] text-[var(--forest)]"><span className="text-lg font-black">D</span></span>
-            <span><span className="block text-sm font-bold tracking-wide">DE-LAINAH</span><span className="block text-[10px] uppercase tracking-[0.12em] text-white/55">Agriculture platform</span></span>
+            <Image src="/de-lainah-logo.png" alt="Delainah logo" width={36} height={36} className="h-9 w-9 rounded-xl bg-white object-contain p-1.5" />
+            <span><span className="block text-sm font-bold tracking-wide">Delainah</span><span className="block text-[10px] uppercase tracking-[0.12em] text-white/55">Agriculture platform</span></span>
           </Link>
           <button className="grid h-9 w-9 place-items-center rounded-lg text-white/70 hover:bg-white/10 lg:hidden" onClick={() => setMobileNavOpen(false)} aria-label="Close navigation"><X size={18} /></button>
         </div>
@@ -226,7 +227,7 @@ export default function ConsoleApp() {
         <header className="sticky top-0 z-20 flex h-[76px] items-center justify-between border-b border-[var(--line)] bg-[rgba(255,255,255,0.92)] px-4 backdrop-blur-md sm:px-7 lg:px-9">
           <div className="flex items-center gap-3">
             <button onClick={() => setMobileNavOpen(true)} className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--line)] text-[var(--ink)] lg:hidden" aria-label="Open navigation"><Menu size={18} /></button>
-            <div><div className="text-[11px] text-[var(--muted)]">De-Lainah / {navItems.find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`))?.label ?? "Workspace"}</div><div className="mt-0.5 text-sm font-semibold">{new Intl.DateTimeFormat("en-NG", { dateStyle: "full" }).format(new Date())}</div></div>
+            <div className="flex items-center gap-2"><Image src="/de-lainah-logo.png" alt="Delainah logo" width={20} height={20} className="h-5 w-5 rounded object-contain" /><div><div className="text-[11px] text-[var(--muted)]">Delainah / {navItems.find((item) => pathname === item.href || pathname.startsWith(`${item.href}/`))?.label ?? "Workspace"}</div><div className="mt-0.5 text-sm font-semibold">{new Intl.DateTimeFormat("en-NG", { dateStyle: "full" }).format(new Date())}</div></div></div>
           </div>
           <div className="flex items-center gap-3"><button onClick={() => void refreshSession()} title="Refresh permissions" aria-label="Refresh session" className="grid h-9 w-9 place-items-center rounded-lg border border-[var(--line)] text-[var(--muted)] hover:bg-white"><Activity size={16} /></button></div>
         </header>
@@ -319,13 +320,13 @@ function AuthScreen({ path, onLogin, verificationContacts, onRegistered, onConti
     <main className="grid min-h-screen bg-white lg:grid-cols-[minmax(370px,0.88fr)_1.12fr]">
       <section className="relative hidden overflow-hidden bg-[var(--forest)] p-12 text-white lg:flex lg:flex-col lg:justify-between xl:p-16">
         <div className="absolute -right-20 top-24 h-72 w-72 rounded-full border border-white/10" /><div className="absolute -right-4 top-40 h-40 w-40 rounded-full border border-white/10" />
-        <div className="relative flex items-center gap-3"><span className="grid h-10 w-10 place-items-center rounded-xl bg-[var(--lime)] text-lg font-black text-[var(--forest)]">D</span><span className="text-sm font-bold tracking-[0.08em]">DE-LAINAH</span></div>
+        <div className="relative flex items-center gap-3"><Image src="/de-lainah-logo.png" alt="Delainah logo" width={40} height={40} className="h-10 w-10 rounded-xl bg-white object-contain p-1.5" /><span className="text-sm font-bold tracking-[0.08em]">Delainah</span></div>
         <div className="relative max-w-md pb-8"><div className="mb-5 inline-flex items-center gap-2 rounded-full border border-white/20 px-3 py-1.5 text-[10px] uppercase tracking-[0.14em] text-white/75"><span className="h-1.5 w-1.5 rounded-full bg-[var(--lime)]" /> Agriculture, connected</div><h1 className="text-[42px] font-semibold leading-[1.08] tracking-[-0.02em]">A clearer view of every farm.</h1><p className="mt-5 max-w-sm text-[15px] leading-7 text-white/65">One trusted workspace for agriculture accounts, farms, and field operations.</p></div>
-        <div className="relative flex items-center justify-between border-t border-white/15 pt-5 text-[10px] text-white/45"><span>DE-LAINAH OPTIMAL LTD</span><span className="mono">OPS / 01</span></div>
+        <div className="relative flex items-center justify-between border-t border-white/15 pt-5 text-[10px] text-white/45"><span>Delainah Agriculture Platform</span><span className="mono">OPS / 01</span></div>
       </section>
       <section className="flex min-h-screen items-center justify-center px-5 py-10 sm:px-10">
         <div className="w-full max-w-[420px] app-enter">
-          <div className="mb-9 flex items-center gap-3 lg:hidden"><span className="grid h-9 w-9 place-items-center rounded-xl bg-[var(--forest)] font-black text-[var(--lime)]">D</span><span className="text-sm font-bold tracking-wide">DE-LAINAH</span></div>
+          <div className="mb-9 flex items-center gap-3 lg:hidden"><Image src="/de-lainah-logo.png" alt="Delainah logo" width={36} height={36} className="h-9 w-9 rounded-xl bg-white object-contain p-1.5" /><span className="text-sm font-bold tracking-wide">Delainah</span></div>
           <div className="text-[11px] font-semibold uppercase tracking-[0.15em] text-[var(--leaf)]">Agriculture platform</div><h2 className="mt-2 text-[30px] font-semibold tracking-[-0.02em]">{title}</h2><p className="mt-2 text-sm text-[var(--muted)]">{path === "/login" ? "Sign in to continue to your workspace." : "Use the details associated with your account."}</p>
           <form onSubmit={submit} className="mt-8 space-y-4">
             {path === "/login" && <><Input label="Email or phone number" name="identifier" autoComplete="username" required placeholder="name@example.com or +234…" /><Input label="Password" name="password" type="password" autoComplete="current-password" required /></>}

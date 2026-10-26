@@ -14,8 +14,13 @@ const plexMono = IBM_Plex_Mono({
 });
 
 export const metadata: Metadata = {
-  title: "De-Lainah | Agriculture Platform",
+  title: "Delainah | Agriculture Platform",
   description: "Agriculture workspace for farmers, investors, field teams, and administrators",
+  icons: {
+    icon: "/favicon.ico",
+    shortcut: "/favicon.ico",
+    apple: "/favicon.ico",
+  },
 };
 
 export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {

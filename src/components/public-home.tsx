@@ -56,9 +56,9 @@ export default function PublicHome() {
         />
         <div className="absolute inset-0 -z-10 bg-[linear-gradient(90deg,rgba(8,28,21,0.93)_0%,rgba(8,28,21,0.77)_48%,rgba(8,28,21,0.22)_100%)]" />
         <header className="mx-auto flex max-w-7xl items-center justify-between px-5 py-5 sm:px-8 lg:px-12">
-          <Link href="/" aria-label="De-Lainah home" className="flex items-center gap-2.5">
-            <span className="grid h-9 w-9 place-items-center rounded-md bg-[#16a05e] text-white"><Leaf size={18} /></span>
-            <span className="text-sm font-bold tracking-wide">De-Lainah</span>
+          <Link href="/" aria-label="Delainah home" className="flex items-center gap-2.5">
+            <Image src="/de-lainah-logo.png" alt="Delainah logo" width={36} height={36} className="h-9 w-9 rounded-md bg-white object-contain p-1.5" />
+            <span className="text-sm font-bold tracking-wide">Delainah</span>
           </Link>
           <nav aria-label="Main navigation" className="hidden items-center gap-8 text-xs font-medium text-white/75 md:flex">
             <a className="transition-colors hover:text-white" href="#platform">Platform</a>
@@ -186,9 +186,9 @@ export default function PublicHome() {
 
       <footer className="border-t border-[#e1e7e1] px-5 py-7 sm:px-8 lg:px-12">
         <div className="mx-auto flex max-w-7xl flex-col gap-6 sm:flex-row sm:items-center sm:justify-between">
-          <Link href="/" aria-label="De-Lainah home" className="flex items-center gap-2 text-xs font-bold"><span className="grid h-7 w-7 place-items-center rounded bg-[#14794d] text-white"><Leaf size={14} /></span>De-Lainah</Link>
+          <Link href="/" aria-label="Delainah home" className="flex items-center gap-2 text-xs font-bold"><Image src="/de-lainah-logo.png" alt="Delainah logo" width={28} height={28} className="h-7 w-7 rounded bg-white object-contain p-1" />Delainah</Link>
           <nav aria-label="Footer navigation" className="flex gap-5 text-[11px] text-[#69786f]"><a href="#platform" className="hover:text-[#17251f]">Platform</a><a href="#people" className="hover:text-[#17251f]">Who it is for</a><Link href="/login" className="hover:text-[#17251f]">Sign in</Link></nav>
-          <p className="text-[10px] text-[#87948b]">De-Lainah Optimal Ltd.</p>
+          <p className="text-[10px] text-[#87948b]">Delainah Agriculture Platform</p>
         </div>
       </footer>
     </main>
