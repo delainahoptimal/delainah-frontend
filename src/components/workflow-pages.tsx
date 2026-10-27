@@ -8,7 +8,7 @@ import Image from "next/image";
 import Link from "next/link";
 import dynamic from "next/dynamic";
 import { useRouter, useSearchParams } from "next/navigation";
-import { FormEvent, useEffect, useState } from "react";
+import { FormEvent, useEffect, useRef, useState } from "react";
 import type { Page, SessionUser } from "@/lib/api";
 import { apiRequest, ApiError, errorMessage, pageQuery } from "@/lib/api";
 import { createUuid } from "@/lib/uuid";
@@ -16,6 +16,7 @@ import { isEncryptedOfflineQueueAvailable, readOfflineEntries, removeOfflineEntr
 import type { OfflineEntry } from "@/lib/offline-queue";
 
 type Row = Record<string, unknown>;
+const emptyRows: Row[] = [];
 type SessionInfo = { user: SessionUser; permissions: string[]; roles: unknown[]; permissionError?: boolean };
 type LookupKind = "farmers" | "farms" | "seasons" | "crops" | "farmCrops" | "staffUsers";
 type GeographyValues = { state: string; lga: string; ward: string };
@@ -597,11 +598,13 @@ function FormField({ field, states, lgas, wards, selectedState, selectedLga, fie
   return <label className={`field-label ${wide}`}>{field.label}<input className="field-control" name={field.name} type={field.type ?? "text"} required={field.required} placeholder={field.placeholder} value={fieldValues[field.name] ?? ""} onChange={(event) => onFieldValue(field.name, event.target.value)} />{field.hint && <span className="field-hint">{field.hint}</span>}</label>;
 }
 
-function FieldOfficerRegionPicker({ onReady }: { onReady: (ready: boolean) => void }) {
+function FieldOfficerRegionPicker({ onReady, editing = false, initialRegionLgas = emptyRows }: { onReady: (ready: boolean) => void; editing?: boolean; initialRegionLgas?: Row[] }) {
   const [states, setStates] = useState<Row[]>([]);
   const [selectedState, setSelectedState] = useState("");
   const [lgas, setLgas] = useState<Row[]>([]);
   const [selectedLgas, setSelectedLgas] = useState<string[]>([]);
+  const [selectedByState, setSelectedByState] = useState<Record<string, string[]>>({});
+  const selectedByStateRef = useRef(selectedByState);
   const [search, setSearch] = useState("");
   const [error, setError] = useState("");
   const [retry, setRetry] = useState(0);
@@ -613,12 +616,26 @@ function FieldOfficerRegionPicker({ onReady }: { onReady: (ready: boolean) => vo
         if (!active) return;
         setStates(items);
         const kwara = items.find((item) => String(item.name ?? "").toLowerCase() === "kwara");
-        if (kwara) setSelectedState(String(kwara.id));
+        const assignedStateName = String(initialRegionLgas[0]?.state_name ?? "");
+        const assignedState = items.find((item) => String(item.name ?? "").toLowerCase() === assignedStateName.toLowerCase());
+        const initialByState: Record<string, string[]> = {};
+        for (const lga of initialRegionLgas) {
+          const state = items.find((item) => String(item.name ?? "").toLowerCase() === String(lga.state_name ?? "").toLowerCase());
+          if (state) {
+            const stateId = String(state.id);
+            initialByState[stateId] = [...(initialByState[stateId] ?? []), String(lga.id)];
+          }
+        }
+        setSelectedByState(initialByState);
+        const defaultState = editing ? assignedState ?? kwara ?? items[0] : kwara;
+        if (defaultState) setSelectedState(String(defaultState.id));
         else setError("Kwara state was not found in the location data.");
       })
       .catch((reason: unknown) => { if (active) setError(errorMessage(reason)); });
     return () => { active = false; };
-  }, [onReady, retry]);
+  }, [editing, initialRegionLgas, onReady, retry]);
+
+  useEffect(() => { selectedByStateRef.current = selectedByState; }, [selectedByState]);
 
   useEffect(() => {
     if (!selectedState) return;
@@ -627,36 +644,43 @@ function FieldOfficerRegionPicker({ onReady }: { onReady: (ready: boolean) => vo
       .then((items) => {
         if (!active) return;
         setLgas(items);
-        const ids = items.map((item) => String(item.id));
-        setSelectedLgas(ids);
+        if (!editing) {
+          const ids = items.map((item) => String(item.id));
+          setSelectedLgas(ids);
+        } else {
+          setSelectedLgas((current) => selectedByStateRef.current[selectedState] ?? current);
+        }
         onReady(true);
         setError("");
       })
       .catch((reason: unknown) => { if (active) { setError(errorMessage(reason)); onReady(false); } });
     return () => { active = false; };
-  }, [onReady, selectedState, retry]);
+  }, [editing, onReady, selectedState, retry]);
 
   const visibleLgas = lgas.filter((lga) => String(lga.name ?? "").toLowerCase().includes(search.trim().toLowerCase()));
   const allVisibleSelected = visibleLgas.length > 0 && visibleLgas.every((lga) => selectedLgas.includes(String(lga.id)));
   function toggleLga(id: string) {
-    setSelectedLgas((current) => current.includes(id) ? current.filter((item) => item !== id) : [...current, id]);
+    const updated = selectedLgas.includes(id) ? selectedLgas.filter((item) => item !== id) : [...selectedLgas, id];
+    setSelectedLgas(updated);
+    if (editing) setSelectedByState((current) => ({ ...current, [selectedState]: updated }));
   }
+  const regionLgaIds = editing ? [...new Set(Object.values(selectedByState).flat())] : selectedLgas;
 
   return <section className="mt-5 rounded-lg border border-[var(--line)] bg-[#fbfcfa] p-4 sm:col-span-2">
     <div className="eyebrow">Officer coverage</div>
     <h2 className="mt-1 text-sm font-semibold">Select state and local governments</h2>
-    <p className="mt-1 text-xs leading-5 text-[var(--muted)]">All Kwara LGAs are selected by default. Change state, search, or deselect individual LGAs.</p>
+    <p className="mt-1 text-xs leading-5 text-[var(--muted)]">{editing ? "Current officer coverage is selected. Change state, search, or select and deselect individual LGAs." : "All Kwara LGAs are selected by default. Change state, search, or deselect individual LGAs."}</p>
     <div className="mt-4 grid gap-4 md:grid-cols-2">
-      <label className="field-label">State<select className="field-control" value={selectedState} onChange={(event) => { onReady(false); setSelectedState(event.target.value); setSelectedLgas([]); setLgas([]); }}><option value="">Select a state…</option>{states.map((state) => <option key={String(state.id)} value={String(state.id)}>{display(state.name)}</option>)}</select></label>
+      <label className="field-label">State<select className="field-control" value={selectedState} onChange={(event) => { const nextState = event.target.value; onReady(false); setSelectedState(nextState); setSelectedLgas(editing ? selectedByState[nextState] ?? [] : []); setLgas([]); if (editing && nextState && !selectedByState[nextState]) setSelectedByState((current) => ({ ...current, [nextState]: [] })); }}><option value="">Select a state…</option>{states.map((state) => <option key={String(state.id)} value={String(state.id)}>{display(state.name)}</option>)}</select></label>
       <label className="field-label">Search local governments<input className="field-control" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Type an LGA name" /></label>
     </div>
     {error && <div role="alert" className="mt-3 flex flex-wrap items-center gap-2 text-xs text-[#a34e3d]">{error}<button type="button" className="font-semibold underline" onClick={() => { onReady(false); setRetry((value) => value + 1); }}>Retry</button></div>}
     {selectedState && <div className="mt-3 max-h-60 overflow-y-auto rounded-md border border-[var(--line)] bg-white p-3">
-      <label className="mb-2 flex items-center gap-2 border-b border-[var(--line)] pb-2 text-xs font-bold text-[var(--ink)]"><input type="checkbox" checked={allVisibleSelected} onChange={() => setSelectedLgas((current) => allVisibleSelected ? current.filter((id) => !visibleLgas.some((lga) => String(lga.id) === id)) : [...new Set([...current, ...visibleLgas.map((lga) => String(lga.id))])])} /> Select all {search ? "matching" : "local governments"}</label>
+      <label className="mb-2 flex items-center gap-2 border-b border-[var(--line)] pb-2 text-xs font-bold text-[var(--ink)]"><input type="checkbox" checked={allVisibleSelected} onChange={() => { const updated = allVisibleSelected ? selectedLgas.filter((id) => !visibleLgas.some((lga) => String(lga.id) === id)) : [...new Set([...selectedLgas, ...visibleLgas.map((lga) => String(lga.id))])]; setSelectedLgas(updated); if (editing) setSelectedByState((current) => ({ ...current, [selectedState]: updated })); }} /> Select all {search ? "matching" : "local governments"}</label>
       {visibleLgas.length === 0 ? <p className="py-3 text-xs text-[var(--muted)]">{lgas.length ? "No local governments match this search." : "No local governments are available."}</p> : <div className="grid gap-2 sm:grid-cols-2">{visibleLgas.map((lga) => <label key={String(lga.id)} className="flex items-center gap-2 text-xs font-medium text-[var(--ink)]"><input type="checkbox" checked={selectedLgas.includes(String(lga.id))} onChange={() => toggleLga(String(lga.id))} />{display(lga.name)}</label>)}</div>}
     </div>}
-    <input type="hidden" name="region_lgas" value={JSON.stringify(selectedLgas)} />
-    <p className="mt-2 text-[10px] text-[var(--muted)]">{selectedLgas.length} local government{selectedLgas.length === 1 ? "" : "s"} selected.</p>
+    <input type="hidden" name="region_lgas" value={JSON.stringify(regionLgaIds)} />
+    <p className="mt-2 text-[10px] text-[var(--muted)]">{regionLgaIds.length} local government{regionLgaIds.length === 1 ? "" : "s"} selected.</p>
   </section>;
 }
 
@@ -1300,6 +1324,7 @@ function RecordDetail({ id, title, eyebrow, endpoint, historyPath, session, acti
   const [editing, setEditing] = useState(false);
   const [editBusy, setEditBusy] = useState(false);
   const [editError, setEditError] = useState<unknown>(null);
+  const [fieldOfficerRegionsReady, setFieldOfficerRegionsReady] = useState(false);
   const [geography, setGeography] = useState<GeographyValues>({ state: "", lga: "", ward: "" });
 
   useEffect(() => {
@@ -1325,10 +1350,16 @@ function RecordDetail({ id, title, eyebrow, endpoint, historyPath, session, acti
 
   async function saveRecord(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const isFieldOfficer = endpoint.startsWith("field-officers/field-officers/");
+    if (isFieldOfficer && !fieldOfficerRegionsReady) {
+      setEditError("Wait for the officer coverage options to load before saving.");
+      return;
+    }
     setEditBusy(true);
     setEditError(null);
     const body = Object.fromEntries([...new FormData(event.currentTarget).entries()].filter(([, value]) => String(value).trim() !== "")) as Row;
     for (const field of ["active", "is_required_for_kyc"]) if (body[field] !== undefined) body[field] = body[field] === "true";
+    if (isFieldOfficer && typeof body.region_lgas === "string") body.region_lgas = JSON.parse(body.region_lgas) as string[];
     if (endpoint.startsWith("users/users/") && ("email" in body || "phone_number" in body) && !window.confirm("Changing email or phone number clears that contact's verification status. Continue?")) {
       setEditBusy(false);
       return;
@@ -1380,7 +1411,7 @@ function RecordDetail({ id, title, eyebrow, endpoint, historyPath, session, acti
 
   return <><Link href={backHref(eyebrow)} className="back-link"><ArrowLeft size={14} /> Back to records</Link>{heading(title, eyebrow)}
     <div className="grid gap-5 xl:grid-cols-[minmax(0,1fr)_300px]"><div className="space-y-5">
-      <section className="surface-panel p-5 sm:p-7"><div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--line)] pb-4"><div><div className="mono text-[10px] text-[var(--muted)]">{id}</div><h2 className="mt-1 text-lg font-semibold">{display(record.name ?? record.first_name ?? record.report_reference ?? record.file_name ?? record.email ?? title)}</h2></div><div className="flex items-center gap-2">{Boolean(record.status) && <span className={`status-pill ${statusClass(currentStatus)}`}>{currentStatus.replaceAll("_", " ")}</span>}{canEdit && <button className="secondary-button !min-h-8" onClick={() => { setEditError(null); setEditing((value) => !value); }}>{editing ? "Close editor" : "Edit details"}</button>}</div></div>
+      <section className="surface-panel p-5 sm:p-7"><div className="flex flex-wrap items-start justify-between gap-3 border-b border-[var(--line)] pb-4"><div><div className="mono text-[10px] text-[var(--muted)]">{id}</div><h2 className="mt-1 text-lg font-semibold">{display(record.name ?? record.first_name ?? record.report_reference ?? record.file_name ?? record.email ?? title)}</h2></div><div className="flex items-center gap-2">{Boolean(record.status) && <span className={`status-pill ${statusClass(currentStatus)}`}>{currentStatus.replaceAll("_", " ")}</span>}{canEdit && <button className="secondary-button !min-h-8" onClick={() => { setEditError(null); setFieldOfficerRegionsReady(false); setEditing((value) => !value); }}>{editing ? "Close editor" : "Edit details"}</button>}</div></div>
         {endpoint.startsWith("farmers/farmers/") && <div className="mt-4 flex flex-wrap gap-2"><span className={`status-pill ${record.account_active ? "status-good" : "status-bad"}`}>Account {record.account_active ? "active" : "inactive"}</span><span className={`status-pill ${record.farmer_verified ? "status-good" : "status-wait"}`}>Farmer {record.farmer_verified ? "verified" : "not verified"}</span></div>}
         <dl className="mt-5 grid gap-x-8 gap-y-4 sm:grid-cols-2">{fields.filter(([key]) => !(endpoint.startsWith("farmers/farmers/") && ["account_active", "farmer_verified"].includes(key)) && !(endpoint.startsWith("farm-crops/farm-crops/") && ["farm", "crop", "season"].includes(key))).map(([key, value]) => { const empty = value === null || value === ""; return <div key={key} className="min-w-0"><dt className="detail-label">{key.replaceAll("_", " ")}</dt><dd className={`detail-value ${empty ? "detail-value-empty" : ""}`}>{empty ? "Not provided" : display(value)}</dd></div>; })}</dl>
         {endpoint.startsWith("farms/farms/") && <div className="mt-5 border-t border-[var(--line)] pt-4">
@@ -1394,6 +1425,7 @@ function RecordDetail({ id, title, eyebrow, endpoint, historyPath, session, acti
         </div>}
         {editing && canEdit && <form onSubmit={saveRecord} className="mt-5 grid gap-4 border-t border-[var(--line)] pt-5 sm:grid-cols-2">
           {editableFields.map((field) => <label key={field.name} className={`field-label ${field.wide ? "sm:col-span-2" : ""}`}>{field.label}{field.options ? <select className="field-control" name={field.name} defaultValue={String(record[field.name] ?? "")}><option value="">Select…</option>{field.options.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "textarea" ? <textarea className="field-control min-h-[80px] py-2.5" name={field.name} defaultValue={String(record[field.name] ?? "")} /> : <input className="field-control" name={field.name} type={field.type ?? "text"} defaultValue={String(record[field.name] ?? "")} />}</label>)}
+          {endpoint.startsWith("field-officers/field-officers/") && <FieldOfficerRegionPicker onReady={setFieldOfficerRegionsReady} editing initialRegionLgas={Array.isArray(record.region_lgas) ? record.region_lgas as Row[] : []} />}
           {geographyFields && <GeographySelects values={geography} onChange={setGeography} />}
           {Boolean(editError) && <div className="sm:col-span-2"><ErrorPanel error={editError} /></div>}
           <div className="flex justify-end gap-2 sm:col-span-2"><button type="button" className="secondary-button" onClick={() => setEditing(false)}>Cancel</button><button disabled={editBusy} className="primary-button">{editBusy ? "Saving…" : "Save changes"}</button></div>
