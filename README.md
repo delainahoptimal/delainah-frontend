@@ -28,13 +28,14 @@ Set `ALLOWED_DEV_ORIGINS` in `.env.local` to a comma-separated list of additiona
 - Public farmer/investor registration, login, phone/email OTP verification, password reset, and logout.
 - Permission-driven dashboards, farmer registry/review/status/history, assisted registration, farms/location/photos, and farm status workflow.
 - Field visits and reports, workflow history, report media attachment, field-team assignments, and encrypted offline service-request/report replay.
+- Farm operations hub covering service requests, machinery availability and assignments, produce listings, procurement orders, settlements, and supply forecasts.
 - KYC creation/review, required-document checklist, masked and explicitly audited raw identifier reads, and signed document upload/download.
 - Users, role assignment/expiry, role permission/scope policy, custom permission catalogue, and document type management.
 - Farmer archive approvals, audit search, support tickets, crop/season records, and crop activity history.
 
 Offline entries are encrypted with AES-GCM and stored in IndexedDB. Supported replay uses the backend's stable `device_reference` contract. The mounted API has no conflict-resolution endpoint; a `409` remains visibly queued and is not silently overwritten.
 
-The frontend intentionally omits contract-only payments, investments, financing, procurement, global search, notification management, and other routes absent from the current backend URL configuration. Check `/api/v1/schema/` and the frontend implementation guides before adding modules.
+The frontend intentionally omits contract-only payments, investments, financing, global search, notification management, and other routes absent from the current backend URL configuration. Check `/api/v1/schema/` and the frontend implementation guides before adding modules.
 
 ## Checks
 

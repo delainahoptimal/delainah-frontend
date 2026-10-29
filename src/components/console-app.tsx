@@ -11,11 +11,14 @@ import {
   KeyRound,
   LayoutDashboard,
   LogOut,
-  Map,
+  Map as MapIcon,
   Menu,
+  ShoppingBasket,
   ShieldCheck,
+  Tractor,
   Users,
   UserRound,
+  Wheat,
   X,
 } from "lucide-react";
 import Link from "next/link";
@@ -29,28 +32,33 @@ import WorkflowPages from "@/components/workflow-pages";
 type Session = { user: SessionUser; roles: RoleGrant[]; permissions: string[]; permissionError: boolean };
 
 const navItems = [
-  { label: "Overview", href: "/overview", icon: LayoutDashboard, any: ["farmer.read", "field_visit.read", "auth.read"] },
-  { label: "My profile", href: "/account/profile", icon: UserRound, any: ["auth.return"] },
-  { label: "Farmer registry", href: "/farmers", icon: Users, any: ["farmer.read"] },
-  { label: "Farms", href: "/farms", icon: Map, any: ["farm.read"] },
-  { label: "Field visits", href: "/field-visits", icon: ClipboardList, any: ["field_visit.read"] },
-  { label: "Field reports", href: "/field-reports", icon: FileCheck2, any: ["field_report.read"] },
-  { label: "Offline sync", href: "/offline-sync", icon: Activity, any: ["service_request.create", "field_report.create"] },
-  { label: "Crop records", href: "/farm-crops", icon: Map, any: ["farm_crop.read"] },
-  { label: "Crop activities", href: "/crop-activities", icon: ClipboardList, any: ["farm_crop.read"] },
-  { label: "Crop catalogue", href: "/crops", icon: FileText, any: ["crop.read"] },
-  { label: "Seasons", href: "/seasons", icon: Activity, any: ["season.read"] },
-  { label: "KYC review", href: "/kyc", icon: BadgeCheck, any: ["kyc.read", "kyc.create"] },
-  { label: "Documents", href: "/documents", icon: FileText, any: ["document.read", "document_type.read"] },
-  { label: "Document types", href: "/document-types", icon: FileCheck2, any: ["document_type.read"] },
-  { label: "Field officers", href: "/field-officers", icon: Users, any: ["field_officer.read"] },
-  { label: "Assignments", href: "/assignments", icon: ClipboardList, any: ["assignment.manage"] },
-  { label: "Users", href: "/admin/users", icon: Users, any: ["user.read"] },
-  { label: "Roles & scopes", href: "/admin/roles", icon: ShieldCheck, any: ["user.read"] },
-  { label: "Permissions", href: "/admin/permissions", icon: Activity, any: ["permission.manage", "user.read"] },
-  { label: "Archive approvals", href: "/admin/archivals", icon: FileCheck2, any: ["farmer.delete_approve"] },
-  { label: "Audit search", href: "/audit", icon: Activity, any: ["audit.read"] },
-  { label: "Support", href: "/support", icon: ClipboardList, any: ["support_ticket.read"] },
+  { group: "Workspace", label: "Overview", href: "/overview", icon: LayoutDashboard, any: ["farmer.read", "field_visit.read", "auth.read"] },
+  { group: "Workspace", label: "My profile", href: "/account/profile", icon: UserRound, any: ["auth.return"] },
+  { group: "People & farms", label: "Farmer registry", href: "/farmers", icon: Users, any: ["farmer.read"] },
+  { group: "People & farms", label: "Farms", href: "/farms", icon: MapIcon, any: ["farm.read"] },
+  { group: "People & farms", label: "Crop records", href: "/farm-crops", icon: MapIcon, any: ["farm_crop.read"] },
+  { group: "People & farms", label: "Crop activities", href: "/crop-activities", icon: ClipboardList, any: ["farm_crop.read"] },
+  { group: "People & farms", label: "Crop catalogue", href: "/crops", icon: FileText, any: ["crop.read"] },
+  { group: "People & farms", label: "Seasons", href: "/seasons", icon: Activity, any: ["season.read"] },
+  { group: "Field operations", label: "Field visits", href: "/field-visits", icon: ClipboardList, any: ["field_visit.read"] },
+  { group: "Field operations", label: "Field reports", href: "/field-reports", icon: FileCheck2, any: ["field_report.read"] },
+  { group: "Field operations", label: "Offline sync", href: "/offline-sync", icon: Activity, any: ["service_request.create", "field_report.create"] },
+  { group: "Farm operations", label: "Operations overview", href: "/operations", icon: LayoutDashboard, any: ["service_request.read", "service_request.create", "machinery.read", "machinery.create", "produce.read", "produce.create", "procurement.read", "procurement.create"] },
+  { group: "Farm operations", label: "Service requests", href: "/service-requests", icon: ClipboardList, any: ["service_request.read", "service_request.create"] },
+  { group: "Farm operations", label: "Machinery", href: "/machinery", icon: Tractor, any: ["machinery.read", "machinery.create"] },
+  { group: "Farm operations", label: "Produce listings", href: "/produce", icon: Wheat, any: ["produce.read", "produce.create"] },
+  { group: "Farm operations", label: "Procurement", href: "/procurement", icon: ShoppingBasket, any: ["procurement.read", "procurement.create"] },
+  { group: "Verification", label: "KYC review", href: "/kyc", icon: BadgeCheck, any: ["kyc.read", "kyc.create"] },
+  { group: "Verification", label: "Documents", href: "/documents", icon: FileText, any: ["document.read", "document_type.read"] },
+  { group: "Verification", label: "Document types", href: "/document-types", icon: FileCheck2, any: ["document_type.read"] },
+  { group: "Field team", label: "Field officers", href: "/field-officers", icon: Users, any: ["field_officer.read"] },
+  { group: "Field team", label: "Assignments", href: "/assignments", icon: ClipboardList, any: ["assignment.manage"] },
+  { group: "Administration", label: "Users", href: "/admin/users", icon: Users, any: ["user.read"] },
+  { group: "Administration", label: "Roles & scopes", href: "/admin/roles", icon: ShieldCheck, any: ["user.read"] },
+  { group: "Administration", label: "Permissions", href: "/admin/permissions", icon: Activity, any: ["permission.manage", "user.read"] },
+  { group: "Administration", label: "Archive approvals", href: "/admin/archivals", icon: FileCheck2, any: ["farmer.delete_approve"] },
+  { group: "Administration", label: "Audit search", href: "/audit", icon: Activity, any: ["audit.read"] },
+  { group: "Administration", label: "Support", href: "/support", icon: ClipboardList, any: ["support_ticket.read"] },
 ];
 
 const publicRoutes = new Set(["/login", "/register", "/verify", "/verify-email", "/forgot-password"]);
@@ -133,6 +141,15 @@ export default function ConsoleApp() {
     const farmerHiddenRoutes = new Set(["/farmers", "/crops", "/seasons", "/document-types"]);
     return navItems.filter((item) => item.any.some((permission) => session.permissions.includes(permission)) && !(session.user.user_type === "FARMER" && farmerHiddenRoutes.has(item.href)));
   }, [session]);
+  const navGroups = useMemo(() => {
+    const groups = new Map<string, typeof availableNav>();
+    for (const item of availableNav) {
+      const entries = groups.get(item.group) ?? [];
+      entries.push(item);
+      groups.set(item.group, entries);
+    }
+    return [...groups.entries()];
+  }, [availableNav]);
 
   async function onLogin(identifier: string, password: string) {
     try {
@@ -205,13 +222,15 @@ export default function ConsoleApp() {
           </Link>
           <button className="grid h-9 w-9 place-items-center rounded-lg text-white/70 hover:bg-white/10 lg:hidden" onClick={() => setMobileNavOpen(false)} aria-label="Close navigation"><X size={18} /></button>
         </div>
-        <div className="px-4 pb-2 pt-6 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/40">Workspace</div>
-        <nav className="scrollbar-thin flex-1 space-y-1 overflow-y-auto px-3 pb-5">
-          {availableNav.map((item, index) => {
-            const active = pathname === item.href || (item.href !== "/overview" && pathname.startsWith(`${item.href}/`));
-            const Icon = item.icon;
-            return <Link key={item.href} href={item.href} onClick={() => setMobileNavOpen(false)} className={`group flex min-h-10 items-center gap-3 rounded-lg px-3 text-[13px] transition-colors ${active ? "bg-white/12 text-white" : "text-white/65 hover:bg-white/[0.07] hover:text-white"}`} style={{ animationDelay: `${index * 24}ms` }}><Icon size={16} strokeWidth={active ? 2.3 : 1.8} className={active ? "text-[var(--lime)]" : "text-white/55 group-hover:text-white/80"} /><span className="flex-1">{item.label}</span>{active && <span className="h-1.5 w-1.5 rounded-full bg-[var(--lime)]" />}</Link>;
-          })}
+        <nav aria-label="Main navigation" className="scrollbar-thin flex-1 space-y-4 overflow-y-auto px-3 pb-5 pt-5">
+          {navGroups.map(([group, items]) => <section key={group} aria-label={group}>
+            <h2 className="px-3 pb-1 text-[10px] font-semibold uppercase tracking-[0.16em] text-white/40">{group}</h2>
+            <div className="space-y-1">{items.map((item, index) => {
+              const active = pathname === item.href || (item.href !== "/overview" && pathname.startsWith(`${item.href}/`));
+              const Icon = item.icon;
+              return <Link key={item.href} href={item.href} onClick={() => setMobileNavOpen(false)} className={`group flex min-h-10 items-center gap-3 rounded-lg px-3 text-[13px] transition-colors ${active ? "bg-white/12 text-white" : "text-white/65 hover:bg-white/[0.07] hover:text-white"}`} style={{ animationDelay: `${index * 24}ms` }}><Icon size={16} strokeWidth={active ? 2.3 : 1.8} className={active ? "text-[var(--lime)]" : "text-white/55 group-hover:text-white/80"} /><span className="flex-1">{item.label}</span>{active && <span className="h-1.5 w-1.5 rounded-full bg-[var(--lime)]" />}</Link>;
+            })}</div>
+          </section>)}
         </nav>
         <div className="border-t border-white/10 px-4 py-4">
           <div className="flex items-center gap-3 rounded-xl bg-black/10 p-3">

@@ -14,9 +14,10 @@ import { apiRequest, ApiError, errorMessage, pageQuery } from "@/lib/api";
 import { createUuid } from "@/lib/uuid";
 import { isEncryptedOfflineQueueAvailable, readOfflineEntries, removeOfflineEntry, storeOfflineEntry } from "@/lib/offline-queue";
 import type { OfflineEntry } from "@/lib/offline-queue";
+import OperationsPages from "@/components/operations-pages";
 
 type Row = Record<string, unknown>;
-type SessionInfo = { user: SessionUser; permissions: string[]; roles: unknown[]; permissionError?: boolean };
+type SessionInfo = { user: SessionUser; permissions: string[]; roles: { code?: string; scopes?: string[]; is_active?: boolean }[]; permissionError?: boolean };
 type LookupKind = "farmers" | "farms" | "seasons" | "crops" | "farmCrops" | "staffUsers";
 type GeographyValues = { state: string; lga: string; ward: string };
 type FarmCoordinate = { latitude: number; longitude: number };
@@ -212,6 +213,7 @@ export default function WorkflowPages({ path, session, onToast, onSessionRefresh
 
   if (section === "overview") return <Dashboard session={session} />;
   if (section === "offline-sync") return <OfflineSyncPage session={session} onToast={onToast} />;
+  if (section === "operations" || ["service-requests", "machinery", "produce", "procurement"].includes(section)) return <OperationsPages path={path} session={session} onToast={onToast} />;
   if (section === "account" && segments[1] === "password") return <PasswordChangePage onToast={onToast} />;
   if (section === "account" && segments[1] === "profile") return <AccountProfilePage session={session} />;
   if (section === "farmers" && id === "new") return <CreatePage resource={resources.farmers} session={session} onToast={onToast} />;
