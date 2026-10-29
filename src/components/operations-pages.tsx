@@ -8,16 +8,17 @@ import Link from "next/link";
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { apiRequest, errorMessage } from "@/lib/api";
+import type { RoleGrant, SessionUser } from "@/lib/api";
 
 type Row = Record<string, unknown>;
-type SessionInfo = { user: { user_type?: string }; permissions: string[]; permissionError?: boolean; roles?: { scopes?: string[] }[] };
+type SessionInfo = { user: SessionUser; permissions: string[]; permissionError?: boolean; roles: RoleGrant[] };
 
 function permitted(session: SessionInfo, permission: string) {
   return !session.permissionError && session.permissions.includes(permission);
 }
 
 function hasOperationsScope(session: SessionInfo) {
-  return session.roles?.some((role) => role.scopes?.some((scope) => scope === "OPS" || scope === "ALL")) ?? false;
+  return session.roles.some((role) => role.scopes?.some((scope) => scope === "OPS" || scope === "ALL"));
 }
 
 function getRows(payload: unknown): Row[] {
