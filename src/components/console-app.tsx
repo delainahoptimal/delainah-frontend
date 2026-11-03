@@ -43,9 +43,9 @@ const navItems = [
   { group: "Field operations", label: "Field visits", href: "/field-visits", icon: ClipboardList, any: ["field_visit.read"] },
   { group: "Field operations", label: "Field reports", href: "/field-reports", icon: FileCheck2, any: ["field_report.read"] },
   { group: "Field operations", label: "Offline sync", href: "/offline-sync", icon: Activity, any: ["service_request.create", "field_report.create"] },
-  { group: "Farm operations", label: "Operations overview", href: "/operations", icon: LayoutDashboard, any: ["service_request.read", "service_request.create", "machinery.read", "machinery.create", "produce.read", "produce.create", "procurement.read", "procurement.create"] },
-  { group: "Farm operations", label: "Service requests", href: "/service-requests", icon: ClipboardList, any: ["service_request.read", "service_request.create"] },
-  { group: "Farm operations", label: "Machinery", href: "/machinery", icon: Tractor, any: ["machinery.read", "machinery.create"] },
+  { group: "Farm operations", label: "Operations overview", href: "/operations", icon: LayoutDashboard, any: ["service_request.read", "service_request.create", "service.manage", "service_payment.verify", "machinery.read", "machinery.create", "machinery.maintenance", "machinery.utilization.read", "produce.read", "produce.create", "procurement.read", "procurement.create"] },
+  { group: "Farm operations", label: "Service requests", href: "/service-requests", icon: ClipboardList, any: ["service_request.read", "service_request.create", "service.manage", "service_payment.verify"] },
+  { group: "Farm operations", label: "Machinery", href: "/machinery", icon: Tractor, any: ["machinery.read", "machinery.create", "machinery.maintenance", "machinery.utilization.read"] },
   { group: "Farm operations", label: "Produce listings", href: "/produce", icon: Wheat, any: ["produce.read", "produce.create"] },
   { group: "Farm operations", label: "Procurement", href: "/procurement", icon: ShoppingBasket, any: ["procurement.read", "procurement.create"] },
   { group: "Verification", label: "KYC review", href: "/kyc", icon: BadgeCheck, any: ["kyc.read", "kyc.create"] },
@@ -57,6 +57,8 @@ const navItems = [
   { group: "Administration", label: "Roles & scopes", href: "/admin/roles", icon: ShieldCheck, any: ["user.read"] },
   { group: "Administration", label: "Permissions", href: "/admin/permissions", icon: Activity, any: ["permission.manage", "user.read"] },
   { group: "Administration", label: "Archive approvals", href: "/admin/archivals", icon: FileCheck2, any: ["farmer.delete_approve"] },
+  { group: "Administration", label: "Operational choices", href: "/operations/catalogues", icon: ClipboardList, any: [] },
+  { group: "Administration", label: "Geography data", href: "/operations/locations", icon: MapIcon, any: [] },
   { group: "Administration", label: "Audit search", href: "/audit", icon: Activity, any: ["audit.read"] },
   { group: "Administration", label: "Support", href: "/support", icon: ClipboardList, any: ["support_ticket.read"] },
 ];
@@ -139,7 +141,8 @@ export default function ConsoleApp() {
   const availableNav = useMemo(() => {
     if (!session) return [];
     const farmerHiddenRoutes = new Set(["/farmers", "/crops", "/seasons", "/document-types"]);
-    return navItems.filter((item) => item.any.some((permission) => session.permissions.includes(permission)) && !(session.user.user_type === "FARMER" && farmerHiddenRoutes.has(item.href)));
+    const isSuperAdmin = session.user.user_type === "SUPER_ADMIN" || session.roles.some((role) => role.code === "SUPER_ADMIN");
+    return navItems.filter((item) => (item.any.some((permission) => session.permissions.includes(permission)) || (isSuperAdmin && (item.href === "/service-requests" || item.href === "/operations" || item.href === "/operations/catalogues" || item.href === "/operations/locations"))) && !(session.user.user_type === "FARMER" && farmerHiddenRoutes.has(item.href)));
   }, [session]);
   const navGroups = useMemo(() => {
     const groups = new Map<string, typeof availableNav>();

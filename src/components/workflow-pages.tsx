@@ -15,6 +15,7 @@ import { createUuid } from "@/lib/uuid";
 import { isEncryptedOfflineQueueAvailable, readOfflineEntries, removeOfflineEntry, storeOfflineEntry } from "@/lib/offline-queue";
 import type { OfflineEntry } from "@/lib/offline-queue";
 import OperationsPages from "@/components/operations-pages";
+import OperationalOptionSelect from "@/components/operational-option-select";
 
 type Row = Record<string, unknown>;
 type SessionInfo = { user: SessionUser; permissions: string[]; roles: RoleGrant[]; permissionError?: boolean };
@@ -23,7 +24,7 @@ type LookupKind = "farmers" | "farms" | "seasons" | "crops" | "farmCrops" | "sta
 type GeographyValues = { state: string; lga: string; ward: string };
 type FarmCoordinate = { latitude: number; longitude: number };
 type FarmBoundaryGeometry = { type: "Polygon"; coordinates: number[][][] };
-type Field = { name: string; label: string; type?: string; required?: boolean; options?: string[]; lookup?: LookupKind; dependsOn?: string; placeholder?: string; hint?: string; wide?: boolean };
+type Field = { name: string; label: string; type?: string; required?: boolean; options?: string[]; catalogueKind?: string; lookup?: LookupKind; dependsOn?: string; placeholder?: string; hint?: string; wide?: boolean };
 type Column = { key: string; label: string; mono?: boolean; status?: boolean };
 type Action = { label: string; permission: string; path: (id: string) => string; method?: "POST" | "PATCH" | "DELETE"; body?: (reason: string) => Row; reasonLabel?: string; states?: string[]; registrationSource?: string; tone?: "danger" };
 type Resource = {
@@ -189,6 +190,7 @@ function recordId(record: Row) { return String(record.id ?? record.pk ?? ""); }
 function hasPermission(session: SessionInfo, permission?: string) { return Boolean(permission && !session.permissionError && session.permissions.includes(permission)); }
 function hasScope(session: SessionInfo, allowed: string[]) { return session.roles.some((role) => role.scopes?.some((scope) => allowed.includes(scope) || scope === "ALL")); }
 function hasRole(session: SessionInfo, code: string) { return session.roles.some((role) => role.code === code && role.is_active !== false); }
+function isSuperAdmin(session: SessionInfo) { return session.user.user_type === "SUPER_ADMIN" || hasRole(session, "SUPER_ADMIN"); }
 function pageData(payload: unknown): { rows: Row[]; count: number; next: boolean } {
   if (Array.isArray(payload)) return { rows: payload as Row[], count: payload.length, next: false };
   if (payload && typeof payload === "object" && "results" in payload) { const result = payload as Page<Row>; return { rows: result.results ?? [], count: result.count ?? result.results?.length ?? 0, next: Boolean(result.next) }; }
@@ -225,7 +227,7 @@ export default function WorkflowPages({ path, session, onToast, onSessionRefresh
   if (section === "field-reports" && isDetail) return <ReportDetail id={id!} session={session} onToast={onToast} />;
   if (section === "kyc" && isDetail) return <KycDetail id={id!} session={session} onToast={onToast} />;
   if (section === "documents" && isDetail) return <RecordDetail id={id!} title="Document record" eyebrow="Verification / Documents" endpoint={`documents/documents/${id}`} session={session} />;
-  if (section === "farm-crops" && isDetail) return <RecordDetail id={id!} title="Farm-season crop" eyebrow="Agronomy / Crop record" endpoint={`farm-crops/farm-crops/${id}`} session={session} editableFields={[{ name: "area_hectares", label: "Area (ha)", type: "number" }, { name: "planted_at", label: "Planted date", type: "date" }, { name: "expected_harvest_at", label: "Expected harvest", type: "date" }, { name: "actual_harvest_at", label: "Actual harvest", type: "date" }, { name: "expected_yield", label: "Expected yield", type: "number" }, { name: "actual_yield", label: "Actual yield", type: "number" }, { name: "quality_grade", label: "Quality grade" }, { name: "status", label: "Status" }]} editPermission="farm_crop.update" />;
+  if (section === "farm-crops" && isDetail) return <RecordDetail id={id!} title="Farm-season crop" eyebrow="Agronomy / Crop record" endpoint={`farm-crops/farm-crops/${id}`} session={session} editableFields={[{ name: "area_hectares", label: "Area (ha)", type: "number" }, { name: "planted_at", label: "Planted date", type: "date" }, { name: "expected_harvest_at", label: "Expected harvest", type: "date" }, { name: "actual_harvest_at", label: "Actual harvest", type: "date" }, { name: "expected_yield", label: "Expected yield", type: "number" }, { name: "actual_yield", label: "Actual yield", type: "number" }, { name: "quality_grade", label: "Quality grade", catalogueKind: "PRODUCE_QUALITY_GRADE" }, { name: "status", label: "Status" }]} editPermission="farm_crop.update" />;
   if (section === "field-officers" && isDetail) return <RecordDetail id={id!} title="Field officer" eyebrow="People / Field team" endpoint={`field-officers/field-officers/${id}`} session={session} editableFields={[{ name: "region", label: "Region" }, { name: "active", label: "Active", options: ["true", "false"] }]} editPermission="field_officer.update" />;
   if (section === "admin" && segments[1] === "users" && segments[3] === "permissions") return <UserPermissionManagement id={segments[2]} session={session} onToast={onToast} onSessionRefresh={onSessionRefresh} />;
   if (section === "admin" && segments[1] === "users" && isDetail) return <UserDetail id={id!} session={session} onToast={onToast} onSessionRefresh={onSessionRefresh} />;
@@ -397,21 +399,27 @@ function ResourcePage({ resource, session, onToast }: { resource: Resource; sess
   const [error, setError] = useState<unknown>(null);
   const [refreshIndex, setRefreshIndex] = useState(0);
   const allowed = hasPermission(session, resource.permission);
+  const superAdmin = isSuperAdmin(session);
+  const endpoint = resource.endpoint;
+  const paginated = Boolean(resource.paginated);
+  const includeInactive = resource === resources.documentTypes && superAdmin;
+  const filtersKey = JSON.stringify(filters);
 
   useEffect(() => {
     if (!allowed) return;
     let active = true;
-    const queryValues: Record<string, string | number | undefined> = { ...(resource.paginated ? { page, page_size: 25 } : {}), search: search || undefined, ...(status ? { status } : {}), ...filters };
+    const filterValues = JSON.parse(filtersKey) as Record<string, string>;
+    const queryValues: Record<string, string | number | undefined> = { ...(paginated ? { page, page_size: 25 } : {}), search: search || undefined, ...(status ? { status } : {}), ...(includeInactive ? { include_inactive: "true" } : {}), ...filterValues };
     const query = pageQuery(queryValues);
     Promise.resolve().then(() => {
       if (active) { setLoading(true); setError(null); }
-      return apiRequest<unknown>(`${resource.endpoint}${query}`);
+      return apiRequest<unknown>(`${endpoint}${query}`);
     })
       .then((payload) => { if (active) { const result = pageData(payload); setRows(result.rows); setCount(result.count); setHasNext(result.next); } })
       .catch((reason: unknown) => { if (active) setError(reason); })
       .finally(() => { if (active) setLoading(false); });
     return () => { active = false; };
-  }, [allowed, filters, page, refreshIndex, resource, search, status]);
+  }, [allowed, endpoint, filtersKey, includeInactive, page, paginated, refreshIndex, search, status]);
 
   if (!allowed) return <Denied title={resource.title} permission={resource.permission} />;
   const canCreate = hasPermission(session, resource.createPermission);
@@ -1426,7 +1434,9 @@ function RecordDetail({ id, title, eyebrow, endpoint, historyPath, session, acti
             : <p className="mt-2 text-[10px] leading-4 text-[var(--muted)]">No farm centre coordinates are saved on this farm record yet. Coordinates saved under Farm location are shown there separately.</p>}
         </div>}
         {editing && canEdit && <form onSubmit={saveRecord} className="mt-5 grid gap-4 border-t border-[var(--line)] pt-5 sm:grid-cols-2">
-          {editableFields.map((field) => <label key={field.name} className={`field-label ${field.wide ? "sm:col-span-2" : ""}`}>{field.label}{field.options ? <select className="field-control" name={field.name} defaultValue={String(record[field.name] ?? "")}><option value="">Select…</option>{field.options.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "textarea" ? <textarea className="field-control min-h-[80px] py-2.5" name={field.name} defaultValue={String(record[field.name] ?? "")} /> : <input className="field-control" name={field.name} type={field.type ?? "text"} defaultValue={String(record[field.name] ?? "")} />}</label>)}
+          {editableFields.map((field) => field.catalogueKind
+            ? <OperationalOptionSelect key={field.name} kind={field.catalogueKind} name={field.name} label={field.label} defaultValue={String(record[field.name] ?? "")} isSuperAdmin={isSuperAdmin(session)} />
+            : <label key={field.name} className={`field-label ${field.wide ? "sm:col-span-2" : ""}`}>{field.label}{field.options ? <select className="field-control" name={field.name} defaultValue={String(record[field.name] ?? "")}><option value="">Select…</option>{field.options.map((option) => <option key={option}>{option}</option>)}</select> : field.type === "textarea" ? <textarea className="field-control min-h-[80px] py-2.5" name={field.name} defaultValue={String(record[field.name] ?? "")} /> : <input className="field-control" name={field.name} type={field.type ?? "text"} defaultValue={String(record[field.name] ?? "")} />}</label>)}
           {endpoint.startsWith("field-officers/field-officers/") && <FieldOfficerRegionPicker onReady={setFieldOfficerRegionsReady} editing initialRegionLgas={Array.isArray(record.region_lgas) ? record.region_lgas as Row[] : []} />}
           {geographyFields && <GeographySelects values={geography} onChange={setGeography} />}
           {Boolean(editError) && <div className="sm:col-span-2"><ErrorPanel error={editError} /></div>}
@@ -1633,14 +1643,14 @@ function RoleDetail({ id, session, onToast, onSessionRefresh }: { id: string; se
   const roleData = role;
   const assignedPermissions = Array.isArray(role.permissions) ? role.permissions.map((item) => typeof item === "string" ? item : String((item as Row).code)) : [];
   const assignedScopes = Array.isArray(role.scopes) ? role.scopes.map((item) => typeof item === "string" ? item : String((item as Row).scope)) : [];
-  const canUpdate = hasPermission(session, "user.update") && roleData.code !== "SUPER_ADMIN";
+  const canUpdate = hasPermission(session, "user.update") && (!roleData.is_system_role || isSuperAdmin(session)) && (roleData.code !== "SUPER_ADMIN" || isSuperAdmin(session));
   async function deleteRole() {
     if (roleData.is_system_role || !canUpdate || !window.confirm(`Delete the unused custom role ${String(roleData.code)}?`)) return;
     try { await apiRequest(`users/roles/${id}`, { method: "DELETE" }); onToast("Custom role deleted."); router.push("/admin/roles"); }
     catch (reason) { setError(reason); }
   }
   return <><Link href="/admin/roles" className="back-link"><ArrowLeft size={14} /> Back to roles</Link>{heading(String(roleData.name ?? roleData.code ?? "Role"), "Access / Role policy", String(roleData.description ?? "Review effective scopes and permission grants."))}{Boolean(error) && <div className="mb-4"><ErrorPanel error={error} /></div>}{roleData.code === "SUPER_ADMIN" && <div className="mb-5 rounded-lg border border-[#edcf9e] bg-[#fff8e8] p-3 text-xs leading-5 text-[#7d5b20]">The protected Super Admin policy cannot be managed by delegated administrators.</div>}
-    {!roleData.is_system_role && <form onSubmit={saveMetadata} className="surface-panel mb-5 grid gap-3 p-5 sm:grid-cols-[1fr_2fr_auto]"><label className="field-label">Role name<input className="field-control" value={roleName} onChange={(event) => setRoleName(event.target.value)} disabled={!canUpdate} required /></label><label className="field-label">Description<input className="field-control" value={roleDescription} onChange={(event) => setRoleDescription(event.target.value)} disabled={!canUpdate} /></label><button className="primary-button self-end" disabled={!canUpdate}>Save details</button></form>}
+    {(!roleData.is_system_role || isSuperAdmin(session)) && <form onSubmit={saveMetadata} className="surface-panel mb-5 grid gap-3 p-5 sm:grid-cols-[1fr_2fr_auto]"><label className="field-label">Role name<input className="field-control" value={roleName} onChange={(event) => setRoleName(event.target.value)} disabled={!canUpdate} required /></label><label className="field-label">Description<input className="field-control" value={roleDescription} onChange={(event) => setRoleDescription(event.target.value)} disabled={!canUpdate} /></label><button className="primary-button self-end" disabled={!canUpdate}>Save details</button></form>}
     <div className="grid gap-5 lg:grid-cols-2"><section className="surface-panel p-5"><div className="eyebrow">Policy scopes</div><h2 className="mt-1 text-sm font-semibold">Authorization boundary</h2><div className="mt-4 space-y-2">{scopeOptions.map((scope) => <label key={scope} className="flex items-center gap-3 rounded-lg border border-[var(--line)] px-3 py-2.5 text-xs"><input type="checkbox" checked={assignedScopes.includes(scope)} disabled={!canUpdate} onChange={(event) => { if (scope === "ALL" && event.target.checked && !window.confirm("Grant ALL scope to this role? This is the broadest authorization scope.")) { event.target.checked = false; return; } void mutate(`users/roles/${id}/scopes${event.target.checked ? "" : `/${scope}`}`, event.target.checked ? "POST" : "DELETE", event.target.checked ? { scope } : undefined); }} /><span className="font-semibold">{scope}</span><span className="text-[var(--muted)]">{scopeDescription(scope)}</span></label>)}</div></section>
       <section className="surface-panel p-5"><div className="eyebrow">Effective grants</div><h2 className="mt-1 text-sm font-semibold">Permissions ({assignedPermissions.length})</h2><div className="mt-4 max-h-64 space-y-1 overflow-y-auto pr-1">{assignedPermissions.map((code) => { const entry = permissions.find((item) => item.code === code); const pid = entry ? String(entry.id ?? "") : ""; return <div key={code} className="flex items-center justify-between gap-3 border-b border-[var(--line)] py-2 text-xs"><span className="mono text-[11px]">{code}</span>{canUpdate && pid && <button onClick={() => void mutate(`users/roles/${id}/permissions/${pid}`, "DELETE")} className="text-[10px] font-semibold text-[#a34e3d]">Revoke</button>}</div>; })}</div>{canUpdate && <div className="mt-4 flex gap-2"><select className="field-control" value={permissionId} onChange={(event) => setPermissionId(event.target.value)}><option value="">Choose permission…</option>{permissions.filter((item) => !assignedPermissions.includes(String(item.code))).map((item) => <option key={String(item.id)} value={String(item.id)}>{String(item.code)}</option>)}</select><button disabled={!permissionId} onClick={() => void mutate(`users/roles/${id}/permissions`, "POST", { permission_id: permissionId })} className="primary-button"><Plus size={14} /> Grant</button></div>}</section>
     </div>{canUpdate && !roleData.is_system_role && <div className="mt-5 flex justify-end"><button className="danger-button" onClick={() => void deleteRole()}>Delete unused custom role</button></div>}</>;
@@ -1658,8 +1668,8 @@ function PermissionDetail({ id, session, onToast }: { id: string; session: Sessi
   const permissionData = permission;
   async function save(event: FormEvent<HTMLFormElement>) { event.preventDefault(); setBusy(true); setError(null); try { await apiRequest(`users/permissions/${id}`, { method: "PATCH", body: { description } }); onToast("Permission description updated."); } catch (reason) { setError(reason); } finally { setBusy(false); } }
   async function remove() { if (permissionData.is_system_permission || !window.confirm(`Delete custom permission ${String(permissionData.code)}? It must not be assigned to a role.`)) return; try { await apiRequest(`users/permissions/${id}`, { method: "DELETE" }); onToast("Permission deleted."); router.push("/admin/permissions"); } catch (reason) { setError(reason); } }
-  const canManage = hasPermission(session, "permission.manage") && !permissionData.is_system_permission;
-  return <><Link href="/admin/permissions" className="back-link"><ArrowLeft size={14} /> Back to permissions</Link>{heading(String(permissionData.code), "Access / Permission catalogue", String(permissionData.is_system_permission ? "System permission: protected" : "Custom permission definition"))}<section className="surface-panel max-w-2xl p-5 sm:p-7"><div className="mono text-xs">{String(permissionData.code)}</div><form onSubmit={save} className="mt-5"><label className="field-label">Description<textarea className="field-control min-h-24 py-2.5" value={description} onChange={(event) => setDescription(event.target.value)} required disabled={!canManage} /></label>{Boolean(error) && <div className="mt-4"><ErrorPanel error={error} /></div>}<div className="mt-5 flex justify-between border-t border-[var(--line)] pt-4">{canManage ? <button type="button" onClick={() => void remove()} className="danger-button">Delete custom permission</button> : <span className="text-xs text-[var(--muted)]">This permission is read-only.</span>}<button disabled={busy || !canManage} className="primary-button">{busy ? "Saving…" : "Save description"}</button></div></form></section></>;
+  const canManage = hasPermission(session, "permission.manage") && (!permissionData.is_system_permission || isSuperAdmin(session));
+  return <><Link href="/admin/permissions" className="back-link"><ArrowLeft size={14} /> Back to permissions</Link>{heading(String(permissionData.code), "Access / Permission catalogue", String(permissionData.is_system_permission ? "System permission codes are fixed; Super Admins can update their descriptions." : "Custom permission definition"))}<section className="surface-panel max-w-2xl p-5 sm:p-7"><div className="mono text-xs">{String(permissionData.code)}</div><form onSubmit={save} className="mt-5"><label className="field-label">Description<textarea className="field-control min-h-24 py-2.5" value={description} onChange={(event) => setDescription(event.target.value)} required disabled={!canManage} /></label>{Boolean(error) && <div className="mt-4"><ErrorPanel error={error} /></div>}<div className="mt-5 flex justify-between border-t border-[var(--line)] pt-4">{canManage && !permissionData.is_system_permission ? <button type="button" onClick={() => void remove()} className="danger-button">Delete custom permission</button> : <span className="text-xs text-[var(--muted)]">{canManage ? "System permission; identifier and deletion are protected." : "This permission is read-only."}</span>}<button disabled={busy || !canManage} className="primary-button">{busy ? "Saving…" : "Save description"}</button></div></form></section></>;
 }
 
 function DocumentTypeDetail({ id, session, onToast }: { id: string; session: SessionInfo; onToast: (message: string) => void }) {
