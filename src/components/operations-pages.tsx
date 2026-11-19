@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { apiRequest, errorMessage } from "@/lib/api";
 import type { RoleGrant, SessionUser } from "@/lib/api";
+import { CoordinateFields } from "@/components/location-inputs";
 import OperationalOptionSelect from "@/components/operational-option-select";
 
 type Row = Record<string, unknown>;
@@ -226,6 +227,8 @@ function LocationCataloguePage({ session, onToast }: { session: SessionInfo; onT
   const [selectedState, setSelectedState] = useState("");
   const [selectedLga, setSelectedLga] = useState("");
   const [selectedWard, setSelectedWard] = useState("");
+  const [selectedWardCoordinates, setSelectedWardCoordinates] = useState({ latitude: "", longitude: "" });
+  const [newWardCoordinates, setNewWardCoordinates] = useState({ latitude: "", longitude: "" });
   const [refresh, setRefresh] = useState(0);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -268,6 +271,10 @@ function LocationCataloguePage({ session, onToast }: { session: SessionInfo; onT
     return () => { active = false; };
   }, [selectedLga, refresh]);
 
+  const selectedStateRow = states.find((item) => String(item.id) === selectedState);
+  const selectedLgaRow = lgas.find((item) => String(item.id) === selectedLga);
+  const selectedWardRow = wards.find((item) => String(item.id) === selectedWard);
+
   async function saveLocation(event: FormEvent<HTMLFormElement>, endpoint: string, method: "POST" | "PATCH", successMessage: string) {
     event.preventDefault();
     setBusy(true);
@@ -285,9 +292,6 @@ function LocationCataloguePage({ session, onToast }: { session: SessionInfo; onT
   }
 
   if (!isAdmin) return <Denied permission="Super Admin" title="Geography data" />;
-  const selectedStateRow = states.find((item) => String(item.id) === selectedState);
-  const selectedLgaRow = lgas.find((item) => String(item.id) === selectedLga);
-  const selectedWardRow = wards.find((item) => String(item.id) === selectedWard);
   return <>
     <PageTitle eyebrow="Administration / Geography data" title="Geography data" description="Manage the states, local government areas, and wards used across registration and farm forms. Existing records keep their linked locations when names or codes are edited." />
     <Notice error={error} success="" />
@@ -307,9 +311,17 @@ function LocationCataloguePage({ session, onToast }: { session: SessionInfo; onT
     </SectionCard>
     <SectionCard title="Wards">
       <div className="grid gap-4 p-5 lg:grid-cols-[minmax(220px,0.8fr)_minmax(0,1.2fr)]">
-        <label className="field-label">Select ward<select className="field-control" value={selectedWard} disabled={!selectedLga} onChange={(event) => setSelectedWard(event.target.value)}><option value="">Choose a ward…</option>{wards.map((item) => <option key={String(item.id)} value={String(item.id)}>{String(item.name)}</option>)}</select></label>
-        {selectedWardRow && <form key={String(selectedWardRow.id)} onSubmit={(event) => void saveLocation(event, `geography/wards/${String(selectedWardRow.id)}`, "PATCH", "Ward updated.")} className="grid gap-3 sm:grid-cols-2 sm:items-end"><TextField name="name" label="Ward name" required defaultValue={String(selectedWardRow.name)} /><TextField name="code" label="Ward code" required defaultValue={String(selectedWardRow.code)} /><TextField name="latitude" label="Latitude" type="number" defaultValue={String(selectedWardRow.latitude ?? "")} /><TextField name="longitude" label="Longitude" type="number" defaultValue={String(selectedWardRow.longitude ?? "")} /><button className="primary-button sm:col-span-2" disabled={busy}>Save ward</button></form>}
-        <form onSubmit={(event) => void saveLocation(event, `geography/lgas/${selectedLga}/wards`, "POST", "Ward added.")} className="grid gap-3 border-t border-[var(--line)] pt-4 sm:grid-cols-2 sm:items-end lg:col-span-2"><TextField name="name" label="New ward name" required /><TextField name="code" label="Ward code" required /><TextField name="latitude" label="Latitude" type="number" /><TextField name="longitude" label="Longitude" type="number" /><button className="secondary-button sm:col-span-2" disabled={busy || !selectedLga}>Add ward</button></form>
+        <label className="field-label">Select ward<select className="field-control" value={selectedWard} disabled={!selectedLga} onChange={(event) => {
+          const wardId = event.target.value;
+          const ward = wards.find((item) => String(item.id) === wardId);
+          setSelectedWard(wardId);
+          setSelectedWardCoordinates({
+            latitude: String(ward?.latitude ?? ""),
+            longitude: String(ward?.longitude ?? ""),
+          });
+        }}><option value="">Choose a ward…</option>{wards.map((item) => <option key={String(item.id)} value={String(item.id)}>{String(item.name)}</option>)}</select></label>
+        {selectedWardRow && <form key={String(selectedWardRow.id)} onSubmit={(event) => void saveLocation(event, `geography/wards/${String(selectedWardRow.id)}`, "PATCH", "Ward updated.")} className="grid gap-3 sm:grid-cols-2 sm:items-end"><TextField name="name" label="Ward name" required defaultValue={String(selectedWardRow.name)} /><TextField name="code" label="Ward code" required defaultValue={String(selectedWardRow.code)} /><CoordinateFields value={selectedWardCoordinates} onChange={setSelectedWardCoordinates} /><button className="primary-button sm:col-span-2" disabled={busy}>Save ward</button></form>}
+        <form onSubmit={(event) => void saveLocation(event, `geography/lgas/${selectedLga}/wards`, "POST", "Ward added.")} className="grid gap-3 border-t border-[var(--line)] pt-4 sm:grid-cols-2 sm:items-end lg:col-span-2"><TextField name="name" label="New ward name" required /><TextField name="code" label="Ward code" required /><CoordinateFields value={newWardCoordinates} onChange={setNewWardCoordinates} /><button className="secondary-button sm:col-span-2" disabled={busy || !selectedLga}>Add ward</button></form>
       </div>
     </SectionCard>
   </>;
@@ -886,6 +898,9 @@ function ProcurementPage({ session, onToast }: { session: SessionInfo; onToast: 
   const [orders, setOrders] = useState<Row[]>([]);
   const [offers, setOffers] = useState<Row[]>([]);
   const [buyers, setBuyers] = useState<Row[]>([]);
+  const [farmers, setFarmers] = useState<Row[]>([]);
+  const [crops, setCrops] = useState<Row[]>([]);
+  const [seasons, setSeasons] = useState<Row[]>([]);
   const [orderLines, setOrderLines] = useState([0]);
   const [nextOrderLine, setNextOrderLine] = useState(1);
   const [loading, setLoading] = useState(true);
@@ -900,6 +915,9 @@ function ProcurementPage({ session, onToast }: { session: SessionInfo; onToast: 
   const canRead = permitted(session, "procurement.read");
   const canCreate = permitted(session, "procurement.create");
   const canReadProduce = permitted(session, "produce.read");
+  const canReadFarmers = permitted(session, "farmer.read");
+  const canReadCrops = permitted(session, "crop.read");
+  const canReadSeasons = permitted(session, "season.read");
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -907,19 +925,22 @@ function ProcurementPage({ session, onToast }: { session: SessionInfo; onToast: 
       const filters = new URLSearchParams();
       if (statusFilter) filters.set("status", statusFilter);
       if (searchFilter.trim()) filters.set("search", searchFilter.trim());
-      if (cropFilter.trim()) filters.set("crop_id", cropFilter.trim());
-      if (seasonFilter.trim()) filters.set("season_id", seasonFilter.trim());
-      if (farmerFilter.trim()) filters.set("farmer_id", farmerFilter.trim());
+      if (cropFilter) filters.set("crop_id", cropFilter);
+      if (seasonFilter) filters.set("season_id", seasonFilter);
+      if (farmerFilter) filters.set("farmer_id", farmerFilter);
       const query = filters.size ? `?${filters.toString()}` : "";
-      const [ordersData, offersData, buyersData] = await Promise.all([
+      const [ordersData, offersData, buyersData, farmerData, cropData, seasonData] = await Promise.all([
         canRead ? apiRequest<unknown>(`procurement/records${query}`) : Promise.resolve([]),
         canCreate && canReadProduce ? apiRequest<unknown>("produce/listings") : Promise.resolve([]),
         canRead ? apiRequest<unknown>("procurement/buyers") : Promise.resolve([]),
+        canRead && canReadFarmers ? apiRequest<unknown>("farmers/farmers?page=1&page_size=100") : Promise.resolve([]),
+        canRead && canReadCrops ? apiRequest<unknown>("crops/crops") : Promise.resolve([]),
+        canRead && canReadSeasons ? apiRequest<unknown>("seasons") : Promise.resolve([]),
       ]);
-      setOrders(getRows(ordersData)); setOffers(getRows(offersData).filter((offer) => offer.status === "PUBLISHED")); setBuyers(getRows(buyersData));
+      setOrders(getRows(ordersData)); setOffers(getRows(offersData).filter((offer) => offer.status === "PUBLISHED")); setBuyers(getRows(buyersData)); setFarmers(getRows(farmerData)); setCrops(getRows(cropData)); setSeasons(getRows(seasonData));
     } catch (reason) { setError(reason); }
     finally { setLoading(false); }
-  }, [canRead, canCreate, canReadProduce, statusFilter, searchFilter, cropFilter, seasonFilter, farmerFilter]);
+  }, [canRead, canCreate, canReadProduce, canReadFarmers, canReadCrops, canReadSeasons, statusFilter, searchFilter, cropFilter, seasonFilter, farmerFilter]);
   useEffect(() => {
     const timer = window.setTimeout(() => { void load(); }, 0);
     return () => window.clearTimeout(timer);
@@ -956,7 +977,7 @@ function ProcurementPage({ session, onToast }: { session: SessionInfo; onToast: 
   return <>
     <PageTitle eyebrow="Produce / Procurement" title="Procurement" description="Filter procurement activity, manage fulfillment, and verify farmer settlements." actions={<div className="flex gap-2"><Link href="/procurement/forecast" className="secondary-button">View forecast<ArrowRight size={13} /></Link><button className="icon-button" onClick={() => void load()} aria-label="Refresh procurement"><RefreshCw size={14} /></button></div>} />
     <Notice error={error} success={success} />
-    {canRead && <SectionCard title="Procurement orders" actions={<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3"><label className="field-label">Status<select className="field-control" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">All statuses</option>{["DRAFT", "CONFIRMED", "PROCESSING", "COMPLETED"].map((item) => <option key={item} value={item}>{titleCase(item)}</option>)}</select></label><label className="field-label">Search<input className="field-control" value={searchFilter} onChange={(event) => setSearchFilter(event.target.value)} placeholder="Order, buyer, or listing" /></label><label className="field-label">Crop ID<input className="field-control" value={cropFilter} onChange={(event) => setCropFilter(event.target.value)} placeholder="Crop UUID" /></label><label className="field-label">Season ID<input className="field-control" value={seasonFilter} onChange={(event) => setSeasonFilter(event.target.value)} placeholder="Season UUID" /></label><label className="field-label">Farmer ID<input className="field-control" value={farmerFilter} onChange={(event) => setFarmerFilter(event.target.value)} placeholder="Farmer UUID" /></label></div>}>{loading ? <Loading /> : <div className="overflow-x-auto"><table className="data-table"><thead><tr><th>Order</th><th>Buyer</th><th>Type</th><th>Items</th><th>Total</th><th>Status</th><th>Settlements</th></tr></thead><tbody>{orders.map((order) => <tr key={String(order.id)}><td><Link className="font-semibold text-[var(--leaf)] hover:underline" href={`/procurement/${String(order.id)}`}>{label(order.order_reference)}</Link></td><td>{label(order.buyer_name)}</td><td>{titleCase(order.buyer_type)}</td><td>{Array.isArray(order.items) ? order.items.length : 0}</td><td>{cash(order.total_amount)}</td><td><span className="status-pill status-wait">{titleCase(order.status)}</span></td><td>{Array.isArray(order.settlements) ? order.settlements.map((item) => `${cash((item as Row).amount)} · ${titleCase((item as Row).payment_status)}`).join(", ") || "—" : "—"}</td></tr>)}</tbody></table>{!orders.length && <p className="px-5 py-8 text-center text-xs text-[var(--muted)]">No procurement orders found.</p>}</div>}</SectionCard>}
+    {canRead && <SectionCard title="Procurement orders" actions={<div className="grid gap-2 sm:grid-cols-2 lg:grid-cols-3"><label className="field-label">Status<select className="field-control" value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="">All statuses</option>{["DRAFT", "CONFIRMED", "PROCESSING", "COMPLETED"].map((item) => <option key={item} value={item}>{titleCase(item)}</option>)}</select></label><label className="field-label">Search<input className="field-control" value={searchFilter} onChange={(event) => setSearchFilter(event.target.value)} placeholder="Order, buyer, or listing" /></label><label className="field-label">Crop<select className="field-control" value={cropFilter} onChange={(event) => setCropFilter(event.target.value)} disabled={!canReadCrops}><option value="">All crops</option>{crops.map((crop) => <option key={String(crop.id)} value={String(crop.id)}>{String(crop.name ?? crop.crop_name ?? "Crop")}</option>)}</select></label><label className="field-label">Season<select className="field-control" value={seasonFilter} onChange={(event) => setSeasonFilter(event.target.value)} disabled={!canReadSeasons}><option value="">All seasons</option>{seasons.map((season) => <option key={String(season.id)} value={String(season.id)}>{`${String(season.name ?? "Season")}${season.year ? ` · ${String(season.year)}` : ""}`}</option>)}</select></label><label className="field-label">Farmer<select className="field-control" value={farmerFilter} onChange={(event) => setFarmerFilter(event.target.value)} disabled={!canReadFarmers}><option value="">All farmers</option>{farmers.map((farmer) => <option key={String(farmer.id)} value={String(farmer.id)}>{`${farmer.farmer_number ?? farmer.provisional_reference ?? "Farmer"} · ${[farmer.first_name, farmer.last_name].filter(Boolean).map(String).join(" ") || String(farmer.email ?? "")}`}</option>)}</select></label></div>}>{loading ? <Loading /> : <div className="overflow-x-auto"><table className="data-table"><thead><tr><th>Order</th><th>Buyer</th><th>Type</th><th>Items</th><th>Total</th><th>Status</th><th>Settlements</th></tr></thead><tbody>{orders.map((order) => <tr key={String(order.id)}><td><Link className="font-semibold text-[var(--leaf)] hover:underline" href={`/procurement/${String(order.id)}`}>{label(order.order_reference)}</Link></td><td>{label(order.buyer_name)}</td><td>{titleCase(order.buyer_type)}</td><td>{Array.isArray(order.items) ? order.items.length : 0}</td><td>{cash(order.total_amount)}</td><td><span className="status-pill status-wait">{titleCase(order.status)}</span></td><td>{Array.isArray(order.settlements) ? order.settlements.map((item) => `${cash((item as Row).amount)} · ${titleCase((item as Row).payment_status)}`).join(", ") || "—" : "—"}</td></tr>)}</tbody></table>{!orders.length && <p className="px-5 py-8 text-center text-xs text-[var(--muted)]">No procurement orders found.</p>}</div>}</SectionCard>}
     {canCreate && <SectionCard title="Create procurement order" description="Choose an accepted and published produce listing to add to a draft order.">
       <form onSubmit={create} className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-3"><label className="field-label">Buyer name<input className="field-control" name="buyer_name" list="operations-buyers" required /><datalist id="operations-buyers">{buyers.map((buyer, index) => <option key={`${String(buyer.buyer_name)}-${index}`} value={String(buyer.buyer_name)} />)}</datalist></label><TextField name="buyer_type" label="Buyer type" hint="For example INTERNAL_PROCESSING." />
         <div className="sm:col-span-2 lg:col-span-3"><h3 className="mb-3 text-xs font-semibold">Produce items</h3><div className="space-y-3">{orderLines.map((index) => <div key={index} className="grid items-end gap-3 rounded-lg border border-[var(--line)] p-3 sm:grid-cols-2 lg:grid-cols-[minmax(0,2fr)_1fr_1fr_auto]"><SelectField name={`produce_offer_${index}`} label="Published produce" rows={offers} required /><TextField name={`quantity_${index}`} label="Quantity" type="number" required /><TextField name={`unit_price_${index}`} label="Unit price (NGN)" type="number" required />{orderLines.length > 1 && <button type="button" className="secondary-button" onClick={() => setOrderLines((current) => current.filter((value) => value !== index))}>Remove</button>}</div>)}</div><button type="button" className="secondary-button mt-3" onClick={() => { setOrderLines((current) => [...current, nextOrderLine]); setNextOrderLine((current) => current + 1); }}><Plus size={13} /> Add produce item</button></div>

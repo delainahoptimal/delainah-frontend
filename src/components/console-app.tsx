@@ -5,16 +5,21 @@ import {
   Activity,
   ArrowRight,
   BadgeCheck,
+  Bell,
   ClipboardList,
+  CloudSun,
   FileCheck2,
   FileText,
   KeyRound,
   LayoutDashboard,
+  Landmark,
   LogOut,
+  Megaphone,
   Map as MapIcon,
   Menu,
   ShoppingBasket,
   ShieldCheck,
+  Tags,
   Tractor,
   Users,
   UserRound,
@@ -48,9 +53,19 @@ const navItems = [
   { group: "Farm operations", label: "Machinery", href: "/machinery", icon: Tractor, any: ["machinery.read", "machinery.create", "machinery.maintenance", "machinery.utilization.read"] },
   { group: "Farm operations", label: "Produce listings", href: "/produce", icon: Wheat, any: ["produce.read", "produce.create"] },
   { group: "Farm operations", label: "Procurement", href: "/procurement", icon: ShoppingBasket, any: ["procurement.read", "procurement.create"] },
+  { group: "Farm projects", label: "Projects", href: "/projects", icon: Wheat, any: ["project.read", "project.create"] },
+  { group: "Finance", label: "Investor profiles", href: "/investors", icon: Users, any: ["investor.read", "investor.update"] },
+  { group: "Finance", label: "Investments", href: "/investments", icon: Activity, any: ["investment.read", "investment.create"] },
+  { group: "Finance", label: "Withdrawals", href: "/withdrawals", icon: Activity, any: ["withdrawal.read", "withdrawal.create"] },
+  { group: "Finance", label: "Financing", href: "/financing", icon: Landmark, any: ["financing_product.read", "financing_product.create", "financing_application.read", "financing_application.create"] },
+  { group: "Communication", label: "Notifications", href: "/notifications", icon: Bell, any: ["notification.read"] },
+  { group: "Communication", label: "SMS campaigns", href: "/sms-campaigns", icon: Megaphone, any: ["sms_campaign.read", "sms_campaign.create"] },
+  { group: "Communication", label: "Weather & alerts", href: "/weather", icon: CloudSun, any: ["weather.read", "weather_alert.create"] },
+  { group: "Communication", label: "Advisories", href: "/advisories", icon: FileText, any: ["advisory.read", "advisory.create"] },
   { group: "Verification", label: "KYC review", href: "/kyc", icon: BadgeCheck, any: ["kyc.read", "kyc.create"] },
   { group: "Verification", label: "Documents", href: "/documents", icon: FileText, any: ["document.read", "document_type.read"] },
   { group: "Verification", label: "Document types", href: "/document-types", icon: FileCheck2, any: ["document_type.read"] },
+  { group: "Verification", label: "Document taxonomy", href: "/document-taxonomy", icon: Tags, any: ["document_category.read", "document_category.create", "document_tag.read", "document_tag.create"] },
   { group: "Field team", label: "Field officers", href: "/field-officers", icon: Users, any: ["field_officer.read"] },
   { group: "Field team", label: "Assignments", href: "/assignments", icon: ClipboardList, any: ["assignment.manage"] },
   { group: "Administration", label: "Users", href: "/admin/users", icon: Users, any: ["user.read"] },
@@ -142,7 +157,8 @@ export default function ConsoleApp() {
     if (!session) return [];
     const farmerHiddenRoutes = new Set(["/farmers", "/crops", "/seasons", "/document-types"]);
     const isSuperAdmin = session.user.user_type === "SUPER_ADMIN" || session.roles.some((role) => role.code === "SUPER_ADMIN");
-    return navItems.filter((item) => (item.any.some((permission) => session.permissions.includes(permission)) || (isSuperAdmin && (item.href === "/service-requests" || item.href === "/operations" || item.href === "/operations/catalogues" || item.href === "/operations/locations"))) && !(session.user.user_type === "FARMER" && farmerHiddenRoutes.has(item.href)));
+    const isInvestor = Boolean(session && (session.user.user_type?.toUpperCase() === "INVESTOR" || session.roles.some((role) => role.code === "INVESTOR")));
+    return navItems.filter((item) => (item.any.some((permission) => session.permissions.includes(permission)) || (isSuperAdmin && (item.href === "/service-requests" || item.href === "/operations" || item.href === "/operations/catalogues" || item.href === "/operations/locations"))) && !(session.user.user_type === "FARMER" && farmerHiddenRoutes.has(item.href)) && !(isInvestor && item.href === "/document-types"));
   }, [session]);
   const navGroups = useMemo(() => {
     const groups = new Map<string, typeof availableNav>();
@@ -153,6 +169,12 @@ export default function ConsoleApp() {
     }
     return [...groups.entries()];
   }, [availableNav]);
+  const isInvestor = Boolean(session && (session.user.user_type?.toUpperCase() === "INVESTOR" || session.roles.some((role) => role.code === "INVESTOR")));
+  const investorOnDocumentTypes = isInvestor && pathname.startsWith("/document-types");
+
+  useEffect(() => {
+    if (investorOnDocumentTypes) router.replace("/overview");
+  }, [investorOnDocumentTypes, router]);
 
   async function onLogin(identifier: string, password: string) {
     try {
@@ -255,7 +277,9 @@ export default function ConsoleApp() {
         </header>
         <main className="mx-auto max-w-[1440px] px-4 pb-12 pt-7 sm:px-7 lg:px-9 lg:pt-9">
           {session.permissionError && <div role="alert" className="mb-5 flex items-center justify-between gap-4 rounded-lg border border-[#edcf9e] bg-[#fff8e8] px-4 py-3 text-xs text-[#7d5b20]">Permission bootstrap failed. Protected actions are hidden until it is retried.<button className="flex shrink-0 items-center gap-1 font-semibold" onClick={() => void refreshSession()}>Retry <ArrowRight size={13} /></button></div>}
-          <WorkflowPages path={pathname} session={session} onToast={setToast} onSessionRefresh={async () => { await refreshSession(); }} />
+          {investorOnDocumentTypes
+            ? <p role="status" className="text-sm text-[var(--muted)]">Redirecting to your workspace…</p>
+            : <WorkflowPages path={pathname} session={session} onToast={setToast} onSessionRefresh={async () => { await refreshSession(); }} />}
         </main>
       </div>
       {toast && <div role="status" className="fixed bottom-5 right-5 z-50 flex max-w-[calc(100vw-40px)] items-start gap-3 rounded-xl bg-[var(--forest)] px-4 py-3 text-sm text-white shadow-xl"><span className="mt-1 h-2 w-2 shrink-0 rounded-full bg-[var(--lime)]" />{toast}</div>}

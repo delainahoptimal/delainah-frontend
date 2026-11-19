@@ -2,6 +2,8 @@
 @import "leaflet/dist/leaflet.css";
 
 :root {
+  --font-dm-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-plex-mono: "SFMono-Regular", Consolas, "Liberation Mono", monospace;
   --paper: #f4f6f1;
   --surface: #ffffff;
   --ink: #17251f;

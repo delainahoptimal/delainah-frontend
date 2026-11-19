@@ -22,7 +22,9 @@ export class ApiError extends Error {
 
 export function errorMessage(error: unknown) {
   if (error instanceof ApiError) {
-    const body = error.payload as Record<string, unknown> | null;
+    const payload = error.payload;
+    if (typeof payload !== "object" || payload === null || Array.isArray(payload)) return error.message;
+    const body = payload as Record<string, unknown>;
     if (body?.detail || body?.message) return String(body.detail ?? body.message);
     if (body) {
       const fields = Object.entries(body)

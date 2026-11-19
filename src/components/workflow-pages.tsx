@@ -15,12 +15,17 @@ import { createUuid } from "@/lib/uuid";
 import { isEncryptedOfflineQueueAvailable, readOfflineEntries, removeOfflineEntry, storeOfflineEntry } from "@/lib/offline-queue";
 import type { OfflineEntry } from "@/lib/offline-queue";
 import OperationsPages from "@/components/operations-pages";
+import InvestmentPages from "@/components/investment-pages";
+import CommunicationPages from "@/components/communication-pages";
+import FinancingPages from "@/components/financing-pages";
+import DocumentTaxonomyPages from "@/components/document-taxonomy-pages";
 import OperationalOptionSelect from "@/components/operational-option-select";
+import { CoordinateFields } from "@/components/location-inputs";
 
 type Row = Record<string, unknown>;
 type SessionInfo = { user: SessionUser; permissions: string[]; roles: RoleGrant[]; permissionError?: boolean };
 const emptyRows: Row[] = [];
-type LookupKind = "farmers" | "farms" | "seasons" | "crops" | "farmCrops" | "staffUsers";
+type LookupKind = "farmers" | "farms" | "seasons" | "crops" | "farmCrops" | "staffUsers" | "users";
 type GeographyValues = { state: string; lga: string; ward: string };
 type FarmCoordinate = { latitude: number; longitude: number };
 type FarmBoundaryGeometry = { type: "Polygon"; coordinates: number[][][] };
@@ -47,7 +52,7 @@ const resources: Record<string, Resource> = {
     title: "Farmer registry", eyebrow: "People / Farmer records", endpoint: "farmers/farmers", permission: "farmer.read", paginated: true,
     columns: [{ key: "farmer_number", label: "Farmer ID", mono: true }, { key: "first_name", label: "Name" }, { key: "email", label: "Email" }, { key: "phone_number", label: "Phone" }, { key: "state_name", label: "State" }, { key: "status", label: "Status", status: true }],
     createPermission: "farmer.create", detailHref: "/farmers", searchHint: "Name, phone, email or farmer number", statusFilter: farmerStatuses,
-    filters: [{ name: "state", label: "State" }, { name: "lga", label: "LGA" }, { name: "ward", label: "Ward" }, { name: "assigned_officer", label: "Assigned officer UUID" }],
+    filters: [{ name: "state", label: "State" }, { name: "lga", label: "LGA" }, { name: "ward", label: "Ward" }, { name: "assigned_officer", label: "Assigned field officer", lookup: "staffUsers" }],
     fields: [
       { name: "email", label: "Email", type: "email", required: true }, { name: "password", label: "Initial password", type: "password", required: true },
       { name: "first_name", label: "First name", required: true }, { name: "last_name", label: "Last name", required: true },
@@ -86,7 +91,7 @@ const resources: Record<string, Resource> = {
     title: "KYC review", eyebrow: "Verification / KYC records", endpoint: "kyc/records", permission: "kyc.read", paginated: true,
     columns: [{ key: "owner_summary", label: "Account holder" }, { key: "id_type", label: "ID type" }, { key: "verification_method", label: "Method" }, { key: "status", label: "Status", status: true }, { key: "submitted_at", label: "Submitted" }],
     createPermission: "kyc.create", detailHref: "/kyc", searchHint: "Name or email", statusFilter: kycStatuses, defaultStatus: "SUBMITTED",
-    filters: [{ name: "id_type", label: "Identity type" }, { name: "user_id", label: "Owner user UUID" }],
+    filters: [{ name: "id_type", label: "Identity type" }, { name: "user_id", label: "Account holder", lookup: "users" }],
     fields: [{ name: "id_type", label: "Identity type", options: ["NIN", "BVN", "VOTER_CARD", "DRIVERS_LICENSE", "PASSPORT", "OTHER"], required: true }, { name: "id_number", label: "Identity number", required: true }, { name: "verification_method", label: "Verification method", options: ["MANUAL", "API", "OTHER"], required: true }],
   },
   documents: {
@@ -209,14 +214,51 @@ export default function WorkflowPages({ path, session, onToast, onSessionRefresh
   const key = section === "field-visits" ? "visits" : section === "field-reports" ? "reports" : section === "kyc" ? "kyc" : section === "admin" ? segments[1] === "users" ? "users" : segments[1] === "roles" ? "roles" : segments[1] === "permissions" ? "permissions" : segments[1] === "archivals" ? "archivals" : "" : section === "document-types" ? "documentTypes" : section === "audit" ? "audit" : section === "support" ? "support" : section === "farm-crops" ? "farmCrops" : section === "crop-activities" ? "cropActivities" : section === "field-officers" ? "officers" : section === "assignments" ? "assignments" : section;
   const resource = resources[key];
   const requiredPermission = resource ? id === "new" ? resource.createPermission : resource.permission : undefined;
+  const investmentPermission = section === "projects"
+    ? segments[1] === "new" ? "project.create" : "project.read"
+    : section === "investors" ? "investor.read"
+      : section === "investments" ? segments[2] === "roi" ? "investment.roi.read" : "investment.read"
+        : section === "withdrawals" ? "withdrawal.read" : undefined;
+  const communicationPermission = section === "notifications" ? "notification.read"
+    : section === "sms-campaigns" ? "sms_campaign.read"
+      : section === "weather" ? "weather.read"
+        : section === "advisories" ? "advisory.read" : undefined;
+  const taxonomyPermission = section === "document-taxonomy" ? (
+    hasPermission(session, "document_category.read")
+      || hasPermission(session, "document_category.create")
+      || hasPermission(session, "document_tag.read")
+      || hasPermission(session, "document_tag.create")
+      ? undefined
+      : "document_category.read or document_tag.read"
+  ) : undefined;
+  const financingPermission = section === "financing" ? (
+    hasPermission(session, "financing_product.read")
+      || hasPermission(session, "financing_product.create")
+      || hasPermission(session, "financing_application.read")
+      || hasPermission(session, "financing_application.create")
+      ? undefined
+      : "financing_application.read or financing_product.read"
+  ) : undefined;
 
   if (session.user.user_type === "FARMER" && ["farmers", "crops", "seasons", "document-types"].includes(section)) return <NotAvailable path={path} />;
 
   if (requiredPermission && !hasPermission(session, requiredPermission)) return <Denied title={resource.title} permission={requiredPermission} />;
+  if (investmentPermission && !hasPermission(session, investmentPermission)) {
+    return <Denied title={section[0].toUpperCase() + section.slice(1)} permission={investmentPermission} />;
+  }
+  if (communicationPermission && !hasPermission(session, communicationPermission)) {
+    return <Denied title={section.replaceAll("-", " ")} permission={communicationPermission} />;
+  }
+  if (taxonomyPermission) return <Denied title="document taxonomy" permission={taxonomyPermission} />;
+  if (financingPermission) return <Denied title="financing" permission={financingPermission} />;
 
   if (section === "overview") return <Dashboard session={session} />;
   if (section === "offline-sync") return <OfflineSyncPage session={session} onToast={onToast} />;
   if (section === "operations" || ["service-requests", "machinery", "produce", "procurement"].includes(section)) return <OperationsPages path={path} session={session} onToast={onToast} />;
+  if (["projects", "investors", "investments", "withdrawals"].includes(section)) return <InvestmentPages path={path} session={session} onToast={onToast} />;
+  if (["notifications", "sms-campaigns", "weather", "advisories"].includes(section)) return <CommunicationPages path={path} session={session} onToast={onToast} />;
+  if (section === "financing") return <FinancingPages session={session} />;
+  if (section === "document-taxonomy") return <DocumentTaxonomyPages session={session} />;
   if (section === "account" && segments[1] === "password") return <PasswordChangePage onToast={onToast} />;
   if (section === "account" && segments[1] === "profile") return <AccountProfilePage session={session} />;
   if (section === "farmers" && id === "new") return <CreatePage resource={resources.farmers} session={session} onToast={onToast} />;
@@ -450,6 +492,7 @@ function ResourcePage({ resource, session, onToast }: { resource: Resource; sess
           if (field.name !== "state") return null;
           return <GeographySelects key="registry-geography-filters" values={{ state: filters.state ?? "", lga: filters.lga ?? "", ward: filters.ward ?? "" }} onChange={(values) => { setPage(1); setFilters((current) => ({ ...current, ...values })); }} />;
         }
+        if (field.lookup) return <LookupSelect key={field.name} field={field} session={session} value={filters[field.name] ?? ""} dependencyValue="" onChange={(value) => { setPage(1); setFilters((current) => ({ ...current, [field.name]: value })); }} />;
         return <label className="field-label" key={field.name}>{field.label}{field.options ? <select className="field-control" value={filters[field.name] ?? ""} onChange={(event) => { setPage(1); setFilters((value) => ({ ...value, [field.name]: event.target.value })); }}><option value="">Any</option>{field.options.map((option) => <option key={option}>{option}</option>)}</select> : <input className="field-control" type={field.type ?? "text"} value={filters[field.name] ?? ""} onChange={(event) => { setPage(1); setFilters((value) => ({ ...value, [field.name]: event.target.value })); }} />}</label>;
       })}</div><button type="button" className="mt-3 text-[10px] font-semibold text-[var(--leaf)]" onClick={() => { setFilters({}); setPage(1); }}>Clear advanced filters</button></details>}
       {Boolean(error) && <div className="m-4"><ErrorPanel error={error} onRetry={() => setRefreshIndex((value) => value + 1)} /></div>}
@@ -561,8 +604,12 @@ function CreatePage({ resource, session, onToast }: { resource: Resource; sessio
     : resource === resources.kyc
       ? "Create a KYC draft, then add the required identity documents on the next screen before submitting it for review."
       : undefined;
+  const hasCoordinateFields = resource.fields.some((field) => ["latitude", "longitude"].includes(field.name));
+  const formFields = hasCoordinateFields
+    ? resource.fields.filter((field) => !["latitude", "longitude"].includes(field.name))
+    : resource.fields;
   return <><Link href={`/${routeForResource(resource)}`} className="back-link"><ArrowLeft size={14} /> Back to {resource.title.toLowerCase()}</Link>{heading(`New ${resource.title.replace(/s$/, "").toLowerCase()}`, resource.eyebrow, createDescription)}
-    <form onSubmit={submit} className="surface-panel max-w-4xl p-5 sm:p-7"><div className="grid gap-x-5 gap-y-4 sm:grid-cols-2">{resource.fields.map((field) => {
+    <form onSubmit={submit} className="surface-panel max-w-4xl p-5 sm:p-7"><div className="grid gap-x-5 gap-y-4 sm:grid-cols-2">{hasCoordinateFields && <CoordinateFields value={{ latitude: fieldValues.latitude ?? "", longitude: fieldValues.longitude ?? "" }} onChange={(coordinates) => setFieldValues((current) => ({ ...current, ...coordinates }))} />}{formFields.map((field) => {
       if (resource === resources.farms && field.name === "farmer_id" && session.user.user_type === "FARMER") return null;
       if (resource === resources.kyc && field.name === "verification_method" && ["FARMER", "INVESTOR"].includes(session.user.user_type ?? "")) return null;
       if (resource === resources.reports && fieldValues.report_type === "OTHER" && ["farmer", "farm"].includes(field.name)) return null;
@@ -735,10 +782,11 @@ const lookupSources: Record<LookupKind, { endpoint: string; permission: string }
   crops: { endpoint: "crops/crops", permission: "crop.read" },
   farmCrops: { endpoint: "farm-crops/farm-crops", permission: "farm_crop.read" },
   staffUsers: { endpoint: "users/users?role=FIELD_OFFICER&page=1&page_size=100", permission: "user.read" },
+  users: { endpoint: "users/users?page=1&page_size=100", permission: "user.read" },
 };
 
 function lookupOptionValue(row: Row, lookup: LookupKind) {
-  return lookup === "staffUsers" ? String(row.id ?? "") : recordId(row);
+  return lookup === "staffUsers" || lookup === "users" ? String(row.id ?? "") : recordId(row);
 }
 
 function lookupOptionLabel(row: Row, lookup: LookupKind) {
@@ -747,7 +795,7 @@ function lookupOptionLabel(row: Row, lookup: LookupKind) {
   if (lookup === "seasons") return `${display(row.name)}${row.year ? ` · ${display(row.year)}` : ""}`;
   if (lookup === "crops") return display(row.name ?? row.crop_name ?? row.id);
   if (lookup === "farmCrops") return [row.farm_name, row.crop_name, row.season_name ? `${display(row.season_name)}${row.season_year ? ` (${display(row.season_year)})` : ""}` : undefined].map(display).join(" · ");
-  return `${[row.first_name, row.last_name].filter(Boolean).map(String).join(" ") || display(row.email)}${row.email ? ` · ${display(row.email)}` : ""}`;
+  return `${[row.first_name, row.last_name].filter(Boolean).map(String).join(" ") || display(row.email)}${row.email ? ` · ${display(row.email)}` : ""}${lookup === "users" && row.user_type ? ` · ${display(row.user_type)}` : ""}`;
 }
 
 function LookupSelect({ field, session, value, dependencyValue, onChange }: { field: Field; session: SessionInfo; value: string; dependencyValue: string; onChange: (value: string) => void }) {
@@ -1724,7 +1772,7 @@ function Dashboard({ session }: { session: SessionInfo }) {
     {data && <>{isAdmin && <div className="mb-5 grid gap-3 sm:grid-cols-3">{["farmers", "kyc_records", "documents"].map((group, index) => { const value = data[group] && typeof data[group] === "object" ? data[group] as Row : {}; const total = Object.values(value).reduce<number>((sum, count) => sum + Number(count ?? 0), 0); return <Metric key={group} label={group.replaceAll("_", " ")} value={String(total)} detail={`${Object.keys(value).length} status groups`} accent={index} />; })}</div>}
       {isOfficer && metricEntries.length > 0 && <div className="mb-5 grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{metricEntries.map(([label, value], index) => <Metric key={label} label={label.replaceAll("_", " ")} value={display(value)} detail="Current server count" accent={index} />)}</div>}
       {isAdmin && <div className="grid gap-5 lg:grid-cols-3">{["farmers", "kyc_records", "documents"].map((group) => { const counts = (data[group] as Row | undefined) ?? {}; const defaults = group === "farmers" ? farmerStatuses : group === "kyc_records" ? kycStatuses : ["ACTIVE", "VERIFIED", "ARCHIVED"]; const statuses = [...new Set([...defaults, ...Object.keys(counts)])]; return <section key={group} className="surface-panel p-5"><div className="eyebrow">Status distribution</div><h2 className="mt-1 text-sm font-semibold">{group.replaceAll("_", " ")}</h2><div className="mt-4 space-y-3">{statuses.map((status) => <div key={status} className="flex items-center justify-between gap-3 text-xs"><span className="text-[var(--muted)]">{status.replaceAll("_", " ")}</span><span className="mono font-medium">{String(counts[status] ?? 0)}</span></div>)}</div></section>; })}</div>}
-      {isFarmer && <FarmerDashboard data={data} />}
+      {isFarmer && <FarmerDashboard data={data} session={session} onRefresh={() => setRefresh((value) => value + 1)} />}
       {isInvestor && <AccountKycStatus records={pageData(data).rows} />}
       {!isAdmin && isOfficer && <div className="surface-panel mt-5 flex flex-wrap items-center justify-between gap-4 p-5"><div><div className="eyebrow">Field operations</div><h2 className="mt-1 text-sm font-semibold">Your assigned work</h2><p className="mt-1 text-xs text-[var(--muted)]">Dashboard counters only. Record lists use their authorized resource endpoints.</p></div><div className="flex flex-wrap gap-2">{hasPermission(session, "farmer.read") && <Link href="/farmers" className="secondary-button">Assigned farmers <ArrowRight size={14} /></Link>}{hasPermission(session, "field_visit.read") && <Link href="/field-visits" className="secondary-button">Visits <ArrowRight size={14} /></Link>}{hasPermission(session, "field_report.read") && <Link href="/field-reports" className="secondary-button">Reports <ArrowRight size={14} /></Link>}</div></div>}
       <div className="mt-5 flex justify-end text-[10px] text-[var(--muted)]"><button className="inline-flex items-center gap-1 font-semibold" onClick={() => setRefresh((value) => value + 1)}><RefreshCw size={12} /> Refresh totals</button></div>
@@ -1737,11 +1785,24 @@ function WorkspaceLanding({ session }: { session: SessionInfo }) {
   return resourceCards.length ? <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-3">{resourceCards.map(({ key, resource, href }) => <Link key={key} href={href} className="surface-panel flex min-h-28 items-center justify-between gap-4 p-5 transition-colors hover:border-[#b9d0bf]"><div><div className="eyebrow">Available module</div><h2 className="mt-1 text-sm font-semibold">{resource.title}</h2></div><ArrowRight size={16} className="shrink-0 text-[var(--leaf)]" /></Link>)}</div> : <section className="surface-panel p-6"><h2 className="text-sm font-semibold">No workspace modules available</h2><p className="mt-2 text-xs leading-5 text-[var(--muted)]">No supported screens are enabled for your current permissions. Contact your administrator to review your account access.</p></section>;
 }
 
-function FarmerDashboard({ data }: { data: Row }) {
+function FarmerDashboard({ data, session, onRefresh }: { data: Row; session: SessionInfo; onRefresh: () => void }) {
+  const [submitting, setSubmitting] = useState(false);
+  const [submitError, setSubmitError] = useState("");
   const profile = data.profile && typeof data.profile === "object" ? data.profile as Row : {};
   const groups = ["farms", "farm_crops", "weather", "service_requests", "produce_offers", "produce_settlements", "opportunities", "transactions", "documents", "notifications", "support_tickets"];
   const kycRecords = Array.isArray(data.kyc_records) ? data.kyc_records as Row[] : [];
-  return <><div className="grid gap-3 sm:grid-cols-3"><Metric label="Farmer reference" value={display(profile.farmer_number ?? profile.provisional_reference)} detail="Permanent ID appears after verification" accent={0} /><Metric label="Profile status" value={display(profile.status)} detail="Profile verification is separate from KYC" accent={1} /><Metric label="Farm records" value={String(Array.isArray(data.farms) ? data.farms.length : 0)} detail="Farm status is tracked separately" accent={2} /></div><AccountKycStatus records={kycRecords} /><div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{groups.map((key) => { const values = Array.isArray(data[key]) ? data[key] as Row[] : []; return <section key={key} className="surface-panel min-h-36 p-5"><div className="eyebrow">Farmer dashboard</div><div className="mt-1 flex items-center justify-between"><h2 className="text-sm font-semibold">{key.replaceAll("_", " ")}</h2><span className="mono text-xs text-[var(--muted)]">{values.length}</span></div>{values.length ? <p className="mt-3 text-xs leading-5 text-[var(--muted)]">{display(values[0].name ?? values[0].status ?? values[0].reference ?? values[0].subject)}</p> : <p className="mt-3 text-xs text-[var(--muted)]">Nothing to show yet.</p>}</section>; })}</div></>;
+  async function submitRegistration() {
+    if (!profile.id || submitting) return;
+    setSubmitting(true); setSubmitError("");
+    try {
+      await apiRequest(`farmers/farmers/${String(profile.id)}/submit`, { method: "POST", body: {} });
+      onRefresh();
+    } catch (reason) { setSubmitError(errorMessage(reason)); }
+    finally { setSubmitting(false); }
+  }
+  const canSubmit = hasPermission(session, "farmer.submit") && ["DRAFT", "RETURNED"].includes(String(profile.status));
+  return <>{canSubmit && <section className="surface-panel mb-5 flex flex-wrap items-center justify-between gap-4 p-5"><div><div className="eyebrow">Registration</div><h2 className="mt-1 text-sm font-semibold">Submit your farmer profile for verification</h2><p className="mt-1 text-xs text-[var(--muted)]">The registration must be complete before an administrator reviews it.</p>{submitError && <p role="alert" className="mt-2 text-xs text-[#a34e3d]">{submitError}</p>}</div><button className="primary-button" disabled={submitting} onClick={() => void submitRegistration()}>{submitting ? "Submitting…" : "Submit for verification"}</button></section>}
+    <div className="grid gap-3 sm:grid-cols-3"><Metric label="Farmer reference" value={display(profile.farmer_number ?? profile.provisional_reference)} detail="Permanent ID appears after verification" accent={0} /><Metric label="Profile status" value={display(profile.status)} detail="Profile verification is separate from KYC" accent={1} /><Metric label="Farm records" value={String(Array.isArray(data.farms) ? data.farms.length : 0)} detail="Farm status is tracked separately" accent={2} /></div><AccountKycStatus records={kycRecords} /><div className="mt-5 grid gap-4 sm:grid-cols-2 xl:grid-cols-3">{groups.map((key) => { const values = Array.isArray(data[key]) ? data[key] as Row[] : []; return <section key={key} className="surface-panel min-h-36 p-5"><div className="eyebrow">Farmer dashboard</div><div className="mt-1 flex items-center justify-between"><h2 className="text-sm font-semibold">{key.replaceAll("_", " ")}</h2><span className="mono text-xs text-[var(--muted)]">{values.length}</span></div>{values.length ? <p className="mt-3 text-xs leading-5 text-[var(--muted)]">{display(values[0].name ?? values[0].status ?? values[0].reference ?? values[0].subject)}</p> : <p className="mt-3 text-xs text-[var(--muted)]">Nothing to show yet.</p>}</section>; })}</div></>;
 }
 
 function AccountKycStatus({ records }: { records: Row[] }) {
