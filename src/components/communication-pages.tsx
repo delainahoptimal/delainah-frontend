@@ -1,6 +1,6 @@
 "use client";
 
-import { RefreshCw } from "lucide-react";
+import { Cloud, CloudFog, CloudLightning, CloudRain, CloudSun, Droplets, RefreshCw, Sprout, Sun, Thermometer, Wind } from "lucide-react";
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { apiRequest, errorMessage } from "@/lib/api";
@@ -31,6 +31,83 @@ function rowsFromPayload(payload: unknown): Row[] {
   if (Array.isArray(payload)) return payload as Row[];
   if (payload && typeof payload === "object" && Array.isArray((payload as Row).results)) return (payload as Row).results as Row[];
   return [];
+}
+
+function numberValue(value: unknown): number | null {
+  if (value === null || value === undefined || value === "") return null;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function forecastLabel(value: unknown, digits = 0, unit = "") {
+  const parsed = numberValue(value);
+  return parsed === null ? "—" : `${parsed.toFixed(digits)}${unit}`;
+}
+
+function forecastDate(value: unknown, options: Intl.DateTimeFormatOptions = { weekday: "short", month: "short", day: "numeric" }) {
+  if (!value) return "—";
+  const raw = String(value);
+  const parsed = new Date(raw.length === 10 ? `${raw}T12:00:00` : raw);
+  return Number.isNaN(parsed.getTime()) ? raw : new Intl.DateTimeFormat("en-NG", options).format(parsed);
+}
+
+function forecastTime(value: unknown) {
+  if (!value) return "—";
+  const raw = String(value);
+  const parsed = new Date(raw.length === 16 ? `${raw}:00` : raw);
+  return Number.isNaN(parsed.getTime())
+    ? raw
+    : new Intl.DateTimeFormat("en-NG", { hour: "numeric", minute: "2-digit" }).format(parsed);
+}
+
+function weatherCondition(value: unknown) {
+  const code = numberValue(value);
+  if (code === null) return { label: "Conditions unavailable", Icon: Cloud };
+  if (code === 0) return { label: "Clear sky", Icon: Sun };
+  if (code === 1) return { label: "Mainly clear", Icon: CloudSun };
+  if (code === 2) return { label: "Partly cloudy", Icon: CloudSun };
+  if (code === 3) return { label: "Overcast", Icon: Cloud };
+  if (code === 45 || code === 48) return { label: "Fog or haze", Icon: CloudFog };
+  if (code >= 51 && code <= 57) return { label: "Drizzle", Icon: CloudRain };
+  if (code >= 61 && code <= 67) return { label: "Rain", Icon: CloudRain };
+  if (code >= 71 && code <= 77) return { label: "Snow", Icon: Cloud };
+  if (code >= 80 && code <= 82) return { label: "Rain showers", Icon: CloudRain };
+  if (code >= 85 && code <= 86) return { label: "Snow showers", Icon: Cloud };
+  if (code >= 95) return { label: "Thunderstorm", Icon: CloudLightning };
+  return { label: "Variable conditions", Icon: Cloud };
+}
+
+function dailyField(daily: Row, key: string, index: number) {
+  const values = daily[key];
+  return Array.isArray(values) ? values[index] : undefined;
+}
+
+function farmWeatherAdvice(code: unknown, rainProbability: unknown, temperatureHigh: unknown) {
+  const condition = weatherCondition(code).label;
+  const rain = numberValue(rainProbability);
+  const high = numberValue(temperatureHigh);
+  if (condition === "Thunderstorm") return "Monitor local conditions and postpone exposed field work if thunder or lightning is nearby.";
+  if (rain !== null && rain >= 60) return "Rain is likely; consider drainage, and avoid scheduling harvest or drying that needs a dry window.";
+  if (high !== null && high >= 32) return "Plan strenuous field work for cooler hours and check crops for heat or moisture stress.";
+  if (rain !== null && rain <= 10) return "Rain is unlikely; check soil moisture and plan irrigation if crops need water.";
+  return "Use the forecast alongside field observations when planning planting, spraying, or harvest.";
+}
+
+function dayLength(sunrise: unknown, sunset: unknown) {
+  if (!sunrise || !sunset) return null;
+  const startValue = String(sunrise);
+  const endValue = String(sunset);
+  const start = new Date(startValue.length === 16 ? `${startValue}:00` : startValue);
+  const end = new Date(endValue.length === 16 ? `${endValue}:00` : endValue);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime())) return null;
+  const minutes = Math.round((end.getTime() - start.getTime()) / 60_000);
+  return minutes > 0 ? minutes : null;
+}
+
+function formatDaylight(minutes: number | null) {
+  if (minutes === null) return "—";
+  const roundedMinutes = Math.round(minutes);
+  return `${Math.floor(roundedMinutes / 60)}h ${roundedMinutes % 60}m`;
 }
 
 function RecipientSelector({ audienceType, selectedIds, onChange, inputName = "audience_ids" }: { audienceType: string; selectedIds: string[]; onChange: (ids: string[]) => void; inputName?: string }) {
@@ -324,9 +401,17 @@ function WeatherPage({ session, onToast }: Props) {
   const [targetType, setTargetType] = useState("ALL_FARMERS");
   const [targetIds, setTargetIds] = useState<string[]>([]);
   const [farms, setFarms] = useState<Row[]>([]);
+  const [crops, setCrops] = useState<Row[]>([]);
+  const [farmCrops, setFarmCrops] = useState<Row[]>([]);
   const [farmsError, setFarmsError] = useState<unknown>(null);
   const [farmsRetry, setFarmsRetry] = useState(0);
+  const [cropsError, setCropsError] = useState<unknown>(null);
   const [coordinates, setCoordinates] = useState({ latitude: "", longitude: "" });
+  const [selectedHourDay, setSelectedHourDay] = useState("");
+  const [selectedFarmId, setSelectedFarmId] = useState("");
+  const [selectedCropId, setSelectedCropId] = useState("");
+  const [cropAdvisory, setCropAdvisory] = useState<Row | null>(null);
+  const [cropAdvisoryError, setCropAdvisoryError] = useState<unknown>(null);
   const loadAlerts = useCallback(async () => {
     try { setAlerts(await apiRequest<Row[]>("weather-alerts")); }
     catch (reason) { setError(reason); }
@@ -340,12 +425,46 @@ function WeatherPage({ session, onToast }: Props) {
       .catch((reason: unknown) => { if (active) setFarmsError(reason); });
     return () => { active = false; };
   }, [farmsRetry, session]);
-
+  useEffect(() => {
+    if (!can(session, "crop.read")) return;
+    let active = true;
+    apiRequest<unknown>("crops/crops")
+      .then((payload) => { if (active) setCrops(rowsFromPayload(payload)); })
+      .catch((reason: unknown) => { if (active) setCropsError(reason); });
+    return () => { active = false; };
+  }, [session]);
+  useEffect(() => {
+    if (!can(session, "farm_crop.read")) return;
+    let active = true;
+    apiRequest<unknown>("farm-crops/farm-crops")
+      .then((payload) => { if (active) setFarmCrops(rowsFromPayload(payload)); })
+      .catch(() => { if (active) setFarmCrops([]); });
+    return () => { active = false; };
+  }, [session]);
+  const pendingCropAdvisoryId = cropAdvisory && ["QUEUED", "GENERATING"].includes(String(cropAdvisory.status))
+    ? String(cropAdvisory.id ?? "")
+    : "";
+  useEffect(() => {
+    if (!pendingCropAdvisoryId || !can(session, "advisory.read")) return;
+    let active = true;
+    const timer = window.setInterval(() => {
+      void apiRequest<Row>("advisories/personalized/")
+        .then((payload) => {
+          if (!active) return;
+          const advisories = Array.isArray(payload.advisories) ? payload.advisories as Row[] : [];
+          const latest = advisories.find((row) => String(row.id) === pendingCropAdvisoryId);
+          if (latest) setCropAdvisory((current) => current ? { ...current, ...latest } : latest);
+        })
+        .catch((reason: unknown) => { if (active) setCropAdvisoryError(reason); });
+    }, 3000);
+    return () => { active = false; window.clearInterval(timer); };
+  }, [pendingCropAdvisoryId, session]);
   async function fetchForecast(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const form = new FormData(event.currentTarget);
     const query = new URLSearchParams();
     const farmId = String(form.get("farm_id") ?? "").trim();
+    setSelectedFarmId(farmId);
     if (farmId) query.set("farm_id", farmId);
     else {
       query.set("latitude", String(form.get("latitude") ?? ""));
@@ -355,6 +474,32 @@ function WeatherPage({ session, onToast }: Props) {
     try { setForecast(await apiRequest<Row>(`weather/forecast/?${query.toString()}`)); setError(null); }
     catch (reason) { setError(reason); }
     finally { setBusy(""); }
+  }
+
+  async function requestCropAdvisory() {
+    if (!selectedFarmId || !selectedCropId) {
+      setCropAdvisoryError(new Error("Select a farm and crop before requesting a crop-specific advisory."));
+      return;
+    }
+    setCropAdvisoryError(null);
+    setCropAdvisory(null);
+    setBusy("crop-advisory");
+    try {
+      const request = await apiRequest<Row>("advisories/personalized/", {
+        method: "POST",
+        body: {
+          farm_id: selectedFarmId,
+          crop_id: selectedCropId,
+          ...(selectedFarmCrop ? { farm_crop_id: String(selectedFarmCrop.id) } : {}),
+        },
+      });
+      setCropAdvisory(request);
+      onToast("Crop-specific advisory is being prepared.");
+    } catch (reason) {
+      setCropAdvisoryError(reason);
+    } finally {
+      setBusy("");
+    }
   }
 
   async function createAlert(event: FormEvent<HTMLFormElement>) {
@@ -402,17 +547,289 @@ function WeatherPage({ session, onToast }: Props) {
   }
 
   const canManageAlerts = can(session, "weather_alert.create");
+  const assignedFarmCropRows = selectedFarmId
+    ? farmCrops.filter((row) => String(row.farm) === selectedFarmId)
+    : [];
+  const selectableCrops: Row[] = assignedFarmCropRows.length
+    ? assignedFarmCropRows.map((row) => ({
+      id: row.crop && typeof row.crop === "object" ? (row.crop as Row).id : row.crop,
+      name: row.crop_name,
+      season_name: row.season_name,
+    }))
+    : crops;
+  const selectedCrop = selectableCrops.find((crop) => String(crop.id) === selectedCropId);
+  const selectedFarmCrop = assignedFarmCropRows.find((row) => {
+    const crop = row.crop && typeof row.crop === "object" ? (row.crop as Row).id : row.crop;
+    return String(crop) === selectedCropId;
+  });
+  const selectedCropName = String(selectedCrop?.name ?? selectedCrop?.crop_name ?? "General farm weather");
   const current = forecast?.data && typeof forecast.data === "object" ? forecast.data as Row : {};
-  const days = (current.daily && typeof current.daily === "object" ? current.daily as Row : {});
+  const hourly = current.hourly && typeof current.hourly === "object" ? current.hourly as Row : {};
+  const daily = current.daily && typeof current.daily === "object" ? current.daily as Row : {};
+  const hourlyTimes = Array.isArray(hourly.time) ? hourly.time as unknown[] : [];
+  const hourDays = [...new Set(hourlyTimes.map((time) => String(time).slice(0, 10)).filter(Boolean))];
+  const hourDay = selectedHourDay && hourDays.includes(selectedHourDay) ? selectedHourDay : hourDays[0] ?? "";
+  const visibleHours = hourlyTimes.map((time, index) => ({ time, index })).filter(({ time }) => String(time).startsWith(hourDay));
+  const dailyTimes = Array.isArray(daily.time) ? daily.time as unknown[] : [];
+  const condition = weatherCondition(current.weather_code);
+  const CurrentIcon = condition.Icon;
+  const rainProbabilities = dailyTimes.map((_, index) => numberValue(dailyField(daily, "precipitation_probability_max", index)));
+  const dryDays = rainProbabilities.filter((probability) => probability !== null && probability <= 10).length;
+  const maxTemperature = dailyTimes.reduce<number | null>((max, _, index) => {
+    const value = numberValue(dailyField(daily, "temperature_2m_max", index));
+    return value === null ? max : max === null ? value : Math.max(max, value);
+  }, null);
+  const currentTemperature = numberValue(current.temperature_2m);
+  const humidity = numberValue(current.relative_humidity_2m);
+  const windSpeed = numberValue(current.wind_speed_10m);
+  const rainProbabilityToday = numberValue(dailyField(daily, "precipitation_probability_max", 0));
+  const rainAmountToday = numberValue(dailyField(daily, "precipitation_sum", 0));
+  const todayHigh = numberValue(dailyField(daily, "temperature_2m_max", 0));
+  const todayLow = numberValue(dailyField(daily, "temperature_2m_min", 0));
+  const sunriseToday = dailyField(daily, "sunrise", 0);
+  const sunsetToday = dailyField(daily, "sunset", 0);
+  const daylightMinutes = dayLength(sunriseToday, sunsetToday);
+  const avgDaylight = dailyTimes.length
+    ? dailyTimes.reduce<number>((total, _, index) => total + (dayLength(dailyField(daily, "sunrise", index), dailyField(daily, "sunset", index)) ?? 0), 0) / dailyTimes.length
+    : null;
+  const hourlyTemperatures = visibleHours.map(({ index }) => numberValue(Array.isArray(hourly.temperature_2m) ? hourly.temperature_2m[index] : undefined));
+  const validHourlyTemperatures = hourlyTemperatures.filter((temperature): temperature is number => temperature !== null);
+  const hourlyMin = validHourlyTemperatures.length ? Math.floor(Math.min(...validHourlyTemperatures) - 2) : 0;
+  const hourlyMax = validHourlyTemperatures.length ? Math.ceil(Math.max(...validHourlyTemperatures) + 2) : 40;
+  const hourlyRange = Math.max(1, hourlyMax - hourlyMin);
+  const hourlyChartPoints = visibleHours.flatMap(({ time, index }, pointIndex) => {
+    const temperature = hourlyTemperatures[pointIndex];
+    if (temperature === null) return [];
+    const x = visibleHours.length > 1 ? 36 + (pointIndex / (visibleHours.length - 1)) * 688 : 380;
+    const y = 220 - ((temperature - hourlyMin) / hourlyRange) * 180;
+    return [{ x, y, temperature, time, index }];
+  });
+  const hourlyLinePath = hourlyChartPoints.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+  const thresholdY = 220 - ((32 - hourlyMin) / hourlyRange) * 180;
+  const coolestHour = hourlyChartPoints.reduce<(typeof hourlyChartPoints)[number] | null>(
+    (coolest, point) => !coolest || point.temperature < coolest.temperature ? point : coolest,
+    null,
+  );
+  const hottestHour = hourlyChartPoints.reduce<(typeof hourlyChartPoints)[number] | null>(
+    (hottest, point) => !hottest || point.temperature > hottest.temperature ? point : hottest,
+    null,
+  );
+  const heatHours = hourlyChartPoints.filter((point) => point.temperature >= 32).length;
+  const hourlySafeWindow = hourlyChartPoints.filter((point) => {
+    const hour = Number(String(point.time).slice(11, 13));
+    return hour >= 5 && hour <= 10 && point.temperature <= 29.5;
+  });
+  const bestWindow = hourlySafeWindow.length
+    ? `${forecastTime(hourlySafeWindow[0].time)}–${forecastTime(hourlySafeWindow[hourlySafeWindow.length - 1].time)}`
+    : "Check local cooler periods";
+  const temperatureSwings = dailyTimes.flatMap((_, index) => {
+    const high = numberValue(dailyField(daily, "temperature_2m_max", index));
+    const low = numberValue(dailyField(daily, "temperature_2m_min", index));
+    return high === null || low === null ? [] : [Math.max(0, high - low)];
+  });
+  const averageSwing = temperatureSwings.length
+    ? temperatureSwings.reduce((sum, swing) => sum + swing, 0) / temperatureSwings.length
+    : null;
+  const dailyChartRows = dailyTimes.map((day, index) => ({
+    day,
+    index,
+    high: numberValue(dailyField(daily, "temperature_2m_max", index)),
+    low: numberValue(dailyField(daily, "temperature_2m_min", index)),
+    rain: numberValue(dailyField(daily, "precipitation_probability_max", index)),
+  })).filter((row) => row.high !== null || row.low !== null || row.rain !== null);
+  const dailyTempValues = dailyChartRows.flatMap((row) => [row.high, row.low].filter((temperature): temperature is number => temperature !== null));
+  const dailyTempMin = dailyTempValues.length ? Math.floor(Math.min(...dailyTempValues) / 5) * 5 : 0;
+  const dailyTempMax = dailyTempValues.length ? Math.ceil(Math.max(...dailyTempValues) / 5) * 5 : 40;
+  const dailyTempRange = Math.max(1, dailyTempMax - dailyTempMin);
+  const dailyRainPoints = dailyChartRows.flatMap((row, index) => row.rain === null ? [] : [{
+    x: dailyChartRows.length > 1 ? 52 + (index / (dailyChartRows.length - 1)) * 620 : 360,
+    y: 204 - (row.rain / 100) * 150,
+  }]);
+  const dailyRainPath = dailyRainPoints.map((point, index) => `${index === 0 ? "M" : "L"} ${point.x} ${point.y}`).join(" ");
+  const veryDry = dryDays > 0 && dryDays >= Math.ceil(dailyTimes.length * 0.7);
+  const planningHeadline = veryDry
+    ? `Low rainfall is forecast on ${dryDays} of the next ${dailyTimes.length} days`
+    : rainProbabilityToday !== null && rainProbabilityToday >= 60
+      ? "Rain is likely today; plan field access and drying accordingly"
+      : currentTemperature !== null && currentTemperature >= 32
+        ? "High temperatures may affect field work during the warmest hours"
+        : "Use the local forecast to plan your next field activities";
+  const planningDescription = selectedCropId
+    ? `These forecast indicators apply to the selected farm location. Request a crop-specific assessment below to include ${selectedCropName}, its recorded season and stage, and the forecast.`
+    : `General farm weather: ${humidity !== null && humidity <= 30 ? "low humidity may increase water loss; check soil moisture." : "use forecast conditions alongside local soil and field observations."} ${rainProbabilityToday !== null && rainProbabilityToday <= 10 ? "Rain probability is low today." : rainProbabilityToday !== null && rainProbabilityToday >= 60 ? "Rain probability is elevated today." : ""}`;
+  const matrix = [
+    {
+      title: "Irrigation & watering",
+      status: humidity !== null && humidity <= 30 && veryDry ? "caution" as const : "good" as const,
+      result: humidity !== null && humidity <= 30 && veryDry ? "Check water needs" : "Use soil observations",
+      timing: "Review root-zone moisture",
+      detail: humidity !== null && humidity <= 30 && veryDry
+        ? "Low humidity and little forecast rain can increase water loss. Check soil moisture before deciding whether to irrigate."
+        : "Use observed soil moisture and crop stage to decide whether irrigation is needed.",
+      Icon: Droplets,
+    },
+    {
+      title: "Spraying & foliar work",
+      status: windSpeed !== null && windSpeed > 15 ? "avoid" as const : currentTemperature !== null && currentTemperature >= 30 ? "caution" as const : "good" as const,
+      result: windSpeed !== null && windSpeed > 15 ? "Delay if drift risk" : currentTemperature !== null && currentTemperature >= 30 ? "Cooler hours preferred" : "Check label & wind",
+      timing: bestWindow,
+      detail: windSpeed !== null && windSpeed > 15
+        ? "Wind can increase drift. Follow product instructions and wait for suitable conditions."
+        : "High heat can increase evaporation. Use product label directions and avoid spraying in unsuitable wind or heat.",
+      Icon: Wind,
+    },
+    {
+      title: "Harvest & sun-drying",
+      status: rainProbabilityToday !== null && rainProbabilityToday <= 10 && (rainAmountToday ?? 0) <= 1 ? "good" as const : rainProbabilityToday !== null && rainProbabilityToday >= 60 ? "avoid" as const : "caution" as const,
+      result: rainProbabilityToday !== null && rainProbabilityToday <= 10 ? "Drying window likely" : rainProbabilityToday !== null && rainProbabilityToday >= 60 ? "Protect harvested produce" : "Monitor rain timing",
+      timing: `${forecastLabel(rainProbabilityToday, 0, "%")} rain chance today`,
+      detail: "Check produce maturity and quality locally; cover harvested produce if rain develops.",
+      Icon: Sun,
+    },
+    {
+      title: "Planting & transplanting",
+      status: rainProbabilityToday !== null && rainProbabilityToday >= 60 && (rainAmountToday ?? 0) >= 2 ? "caution" as const : "avoid" as const,
+      result: rainProbabilityToday !== null && rainProbabilityToday >= 60 && (rainAmountToday ?? 0) >= 2 ? "Check soil before planting" : "Rain-fed planting may need moisture",
+      timing: rainProbabilityToday !== null && rainProbabilityToday >= 60 ? "Rain may be possible" : "Confirm water availability",
+      detail: "Forecast rain alone does not confirm suitable soil conditions. Check crop calendar, soil moisture, and local agronomic guidance.",
+      Icon: Sprout,
+    },
+  ];
+  const forecastMetrics = [
+    { label: "Temperature", value: forecastLabel(current.temperature_2m, 1, "°C"), note: `Feels like ${forecastLabel(current.apparent_temperature, 1, "°C")} · Today ${forecastLabel(todayLow, 0, "°")} / ${forecastLabel(todayHigh, 0, "°C")}`, Icon: Thermometer, tone: "text-[#a45a27] bg-[#fff3e8]" },
+    { label: "Humidity", value: forecastLabel(current.relative_humidity_2m, 0, "%"), note: "Relative humidity", Icon: Droplets, tone: "text-[#34768a] bg-[#eaf5f7]" },
+    { label: "Precipitation", value: forecastLabel(current.precipitation, 1, " mm"), note: `${forecastLabel(dailyField(daily, "precipitation_probability_max", 0), 0, "%")} chance today`, Icon: CloudRain, tone: "text-[#426f9b] bg-[#edf4fb]" },
+    { label: "Wind", value: forecastLabel(current.wind_speed_10m, 1, " km/h"), note: "At 10 metres", Icon: Wind, tone: "text-[#557c69] bg-[#edf5ef]" },
+  ];
   return <>
-    <Header eyebrow="Agronomy / Weather" title="Weather and alerts" description="Retrieve current conditions and forecasts for authorized farms or coordinates. Create targeted alerts with maker-checker approval." />
+    <Header eyebrow="Agronomy / Weather" title="Weather and alerts" description="Retrieve current conditions and forecasts for authorized farms or coordinates. Create targeted alerts with maker-checker approval." actions={selectableCrops.length > 0 ? <label className="field-label min-w-56">Target crop<select className="field-control" value={selectedCropId} onChange={(event) => { setSelectedCropId(event.target.value); setCropAdvisory(null); setCropAdvisoryError(null); }}><option value="">General farm weather</option>{selectableCrops.map((crop, index) => <option key={String(crop.id ?? index)} value={String(crop.id ?? "")}>{String(crop.name ?? crop.crop_name ?? "Crop")}{crop.season_name ? ` · ${String(crop.season_name)}` : ""}</option>)}</select></label> : undefined} />
+    {Boolean(cropsError) && <p className="field-hint mb-3">Crop options could not be loaded: {errorMessage(cropsError)}</p>}
     <Feedback error={error} />
-    <Panel title="Forecast lookup"><form onSubmit={fetchForecast} className="grid gap-3 md:grid-cols-3">
-      <label className="field-label">Farm<select className="field-control" name="farm_id" defaultValue="" disabled={!can(session, "farm.read") || Boolean(farmsError)}><option value="">Use coordinates instead…</option>{farms.map((farm) => <option key={String(farm.id)} value={String(farm.id)}>{`${String(farm.name ?? "Farm")}${farm.farmer_name ? ` · ${String(farm.farmer_name)}` : ""}`}</option>)}</select>{Boolean(farmsError) && <span role="alert" className="field-hint text-[#a34e3d]">Could not load farms: {errorMessage(farmsError)} <button type="button" className="font-semibold underline" onClick={() => { setFarmsError(null); setFarmsRetry((value) => value + 1); }}>Retry</button></span>}</label>
+    <Panel title="Forecast lookup"><form onSubmit={fetchForecast} className="grid gap-4 md:grid-cols-3">
+      <label className="field-label">Farm<select className="field-control" name="farm_id" value={selectedFarmId} onChange={(event) => { setSelectedFarmId(event.target.value); setSelectedCropId(""); setCropAdvisory(null); setCropAdvisoryError(null); }} disabled={!can(session, "farm.read") || Boolean(farmsError)}><option value="">Use coordinates instead…</option>{farms.map((farm) => <option key={String(farm.id)} value={String(farm.id)}>{`${String(farm.name ?? "Farm")}${farm.farmer_name ? ` · ${String(farm.farmer_name)}` : ""}`}</option>)}</select>{Boolean(farmsError) && <span role="alert" className="field-hint text-[#a34e3d]">Could not load farms: {errorMessage(farmsError)} <button type="button" className="font-semibold underline" onClick={() => { setFarmsError(null); setFarmsRetry((value) => value + 1); }}>Retry</button></span>}</label>
       <CoordinateFields value={coordinates} onChange={setCoordinates} />
       <div className="md:col-span-3"><button className="primary-button" disabled={busy === "forecast"}>{busy === "forecast" ? "Loading…" : "Get forecast"}</button></div>
     </form></Panel>
-    {forecast && <Panel title="Forecast data"><p className="mb-3 text-xs text-[var(--muted)]">Provider: {value(forecast, "provider")} · Updated: {date(forecast.observed_at)}</p><pre className="max-h-96 overflow-auto whitespace-pre-wrap text-[11px] leading-5">{JSON.stringify({ current: current.current, hourly: current.hourly, daily: days }, null, 2)}</pre></Panel>}
+    {forecast && <>
+      <section className="mb-5 overflow-hidden rounded-2xl border border-[#d9e6d6] bg-[linear-gradient(120deg,#f2f7ef,#fbf8ee)] p-5 sm:p-6">
+        <div className="flex flex-col gap-5 lg:flex-row lg:items-center lg:justify-between">
+          <div className="max-w-3xl">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.16em] text-[#527354]">{selectedCropId ? `Farm weather overview · ${selectedCropName}` : "General farm weather"}</p>
+            <h2 className="mt-2 text-xl font-semibold text-[#294a34]">{planningHeadline}</h2>
+            <p className="mt-2 text-sm leading-6 text-[#526258]">{planningDescription}</p>
+            <p className="mt-2 text-[10px] text-[#65766a]">General weather context only; verify crop stage, product labels, and local field conditions before acting.</p>
+          </div>
+          <div className="flex shrink-0 flex-wrap gap-2">
+            <span className="status-pill status-wait">{dryDays} low-rain {dryDays === 1 ? "day" : "days"}</span>
+            {maxTemperature !== null && <span className="status-pill status-neutral">High {maxTemperature.toFixed(1)}°C</span>}
+          </div>
+        </div>
+      </section>
+
+      {selectedCropId && <Panel title={`Crop-specific assessment · ${selectedCropName}`} actions={can(session, "advisory.generate") && selectedFarmId ? <button type="button" className="primary-button" disabled={busy === "crop-advisory" || Boolean(pendingCropAdvisoryId)} onClick={() => void requestCropAdvisory()}>{busy === "crop-advisory" ? "Requesting…" : pendingCropAdvisoryId ? "Preparing…" : "Get AI crop assessment"}</button> : undefined}>
+        {can(session, "advisory.generate") && !selectedFarmId && <p className="mb-3 text-xs text-[var(--muted)]">Select a farm to include its recorded season and crop stage. Coordinate-only forecasts remain general.</p>}
+        {!can(session, "advisory.generate") && <p className="mb-3 text-xs text-[var(--muted)]">Crop-specific AI assessment is not enabled for this account; the weather outlook below remains general.</p>}
+        {Boolean(cropAdvisoryError) && <p role="alert" className="mb-3 text-xs text-[#a34e3d]">{errorMessage(cropAdvisoryError)}</p>}
+        {cropAdvisory && String(cropAdvisory.crop_id) === selectedCropId ? <div className="rounded-xl border border-[var(--line)] bg-[var(--paper)] p-4">
+          <div className="flex flex-wrap items-center justify-between gap-2"><h3 className="text-sm font-semibold">{String(cropAdvisory.title ?? (["QUEUED", "GENERATING"].includes(String(cropAdvisory.status)) ? "Preparing crop-specific assessment…" : "Crop assessment"))}</h3><Status status={String(cropAdvisory.status ?? "QUEUED")} /></div>
+          {cropAdvisory.status === "GENERATED" && <p className="mt-3 whitespace-pre-line text-sm leading-6 text-[var(--muted)]">{String(cropAdvisory.content ?? "")}</p>}
+          {cropAdvisory.status === "FAILED" && <p role="alert" className="mt-3 text-xs text-[#a34e3d]">{String(cropAdvisory.error ?? "The crop-specific assessment could not be generated. Try again later.")}</p>}
+          {["QUEUED", "GENERATING"].includes(String(cropAdvisory.status)) && <p className="mt-2 text-xs text-[var(--muted)]">This can take a short time. The assessment uses recorded crop/season details and forecast data when available.</p>}
+          <p className="mt-3 text-[10px] text-[var(--muted)]">AI-generated decision support, not a substitute for a local agronomist. Verify advice against field observations and product labels.</p>
+        </div> : <p className="text-xs text-[var(--muted)]">Weather thresholds below are general. Request an AI assessment for guidance that considers this crop and its farm records.</p>}
+      </Panel>}
+
+      <Panel title="Current conditions">
+        <div className="mb-4 flex flex-wrap items-center justify-between gap-2 text-xs text-[var(--muted)]">
+          <span>{value(forecast, "provider")} · Updated {date(forecast.observed_at)}</span>
+          <span>Coordinates: {forecastLabel(forecast.latitude, 4)}, {forecastLabel(forecast.longitude, 4)}</span>
+        </div>
+        <div className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-[var(--line)] bg-[var(--paper)] p-4">
+          <span className="grid h-11 w-11 place-items-center rounded-xl bg-[#fff3df] text-[#ad7625]"><CurrentIcon size={23} /></span>
+          <div className="min-w-0 flex-1"><p className="text-sm font-semibold">{condition.label}</p><p className="mt-1 text-xs text-[var(--muted)]">Observed {forecastTime(current.time)} · {forecastDate(current.time, { weekday: "long", month: "long", day: "numeric" })}</p></div>
+          <span className="text-3xl font-semibold tracking-tight">{forecastLabel(current.temperature_2m, 1, "°C")}</span>
+        </div>
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-5">
+          {[...forecastMetrics, { label: "Daylight", value: formatDaylight(daylightMinutes), note: `Average ${formatDaylight(avgDaylight)}`, Icon: Sun, tone: "text-[#a1782d] bg-[#fff6dd]" }].map(({ label: metricLabel, value: metricValue, note, Icon, tone }) => <div key={metricLabel} className="rounded-xl border border-[var(--line)] bg-white/70 p-4">
+            <div className="flex items-center justify-between"><span className="text-xs font-medium text-[var(--muted)]">{metricLabel}</span><span className={`grid h-8 w-8 place-items-center rounded-lg ${tone}`}><Icon size={16} /></span></div>
+            <p className="mt-3 text-xl font-semibold">{metricValue}</p><p className="mt-1 text-[11px] text-[var(--muted)]">{note}</p>
+          </div>)}
+        </div>
+      </Panel>
+
+      <Panel title="General weather-based activity outlook">
+        <div className="grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+          {matrix.map(({ title, status, result, timing, detail, Icon }) => <article key={title} className="rounded-xl border border-[var(--line)] p-4">
+            <div className="flex items-start justify-between gap-2"><span className="grid h-9 w-9 place-items-center rounded-lg bg-[#edf4ed] text-[#527354]"><Icon size={18} /></span><span className={`status-pill ${status === "good" ? "status-good" : status === "avoid" ? "status-bad" : "status-wait"}`}>{status}</span></div>
+            <h3 className="mt-3 text-sm font-semibold">{title}</h3><p className="mt-1 text-xs font-medium text-[#527354]">{result}</p><p className="mt-1 text-[10px] text-[var(--muted)]">{timing}</p><p className="mt-3 text-xs leading-5 text-[var(--muted)]">{detail}</p>
+          </article>)}
+        </div>
+      </Panel>
+
+      <div className="grid gap-5 xl:grid-cols-2">
+        <Panel title="Hourly temperature" actions={hourDays.length > 1 ? <label className="field-label flex items-center gap-2">Day<select className="field-control" value={hourDay} onChange={(event) => setSelectedHourDay(event.target.value)}>{hourDays.map((day) => <option key={day} value={day}>{forecastDate(day)}</option>)}</select></label> : undefined}>
+          <div className="mb-3 flex flex-wrap gap-x-5 gap-y-2 text-xs text-[var(--muted)]">
+            <span>Coolest: {coolestHour ? `${forecastLabel(coolestHour.temperature, 1, "°")} at ${forecastTime(coolestHour.time)}` : "—"}</span>
+            <span>Warmest: {hottestHour ? `${forecastLabel(hottestHour.temperature, 1, "°")} at ${forecastTime(hottestHour.time)}` : "—"}</span>
+            <span>{heatHours} hours at or above 32°C</span>
+          </div>
+          {hourlyChartPoints.length ? <div className="overflow-x-auto">
+            <svg viewBox="0 0 760 270" role="img" aria-label={`Hourly temperatures from ${hourlyMin} to ${hourlyMax} degrees Celsius`} className="h-64 min-w-[560px] w-full">
+              {[0, 1, 2, 3].map((line) => { const y = 40 + line * 60; return <g key={line}><line x1="36" x2="724" y1={y} y2={y} stroke="#e5e9e3" strokeDasharray="3 4" /><text x="4" y={y + 4} fontSize="10" fill="#758078">{(hourlyMax - (line / 3) * hourlyRange).toFixed(0)}°</text></g>; })}
+              {Number.isFinite(thresholdY) && thresholdY >= 40 && thresholdY <= 220 && <line x1="36" x2="724" y1={thresholdY} y2={thresholdY} stroke="#d29542" strokeDasharray="5 4" />}
+              <path d={hourlyLinePath} fill="none" stroke="#648c68" strokeWidth="3" strokeLinejoin="round" strokeLinecap="round" />
+              {hourlyChartPoints.map((point, index) => <g key={String(point.time)}><circle cx={point.x} cy={point.y} r="4" fill={point.temperature >= 32 ? "#d29542" : "#648c68"} />{index % 3 === 0 && <text x={point.x} y="244" textAnchor="middle" fontSize="9" fill="#758078">{forecastTime(point.time)}</text>}</g>)}
+            </svg>
+            <p className="text-[10px] text-[var(--muted)]">Morning cooler window estimate: {bestWindow}. Use this only as a forecast guide.</p>
+          </div> : <p className="text-xs text-[var(--muted)]">Hourly temperature values are not available in this response.</p>}
+        </Panel>
+        <Panel title="Seven-day temperature & rain">
+          {dailyChartRows.length ? <div className="overflow-x-auto">
+            <svg viewBox="0 0 720 270" role="img" aria-label="Daily minimum and maximum temperatures with rain probability" className="h-64 min-w-[520px] w-full">
+              {[0, 1, 2, 3].map((line) => { const y = 30 + line * 55; return <g key={line}><line x1="52" x2="672" y1={y} y2={y} stroke="#e5e9e3" strokeDasharray="3 4" /><text x="5" y={y + 4} fontSize="10" fill="#758078">{(dailyTempMax - (line / 3) * dailyTempRange).toFixed(0)}°</text></g>; })}
+              {[100, 50, 0].map((rain) => <text key={rain} x="678" y={207 - rain * 1.5} fontSize="10" fill="#527c96">{rain}%</text>)}
+              {dailyChartRows.map((row, index) => {
+                const x = dailyChartRows.length > 1 ? 52 + (index / (dailyChartRows.length - 1)) * 620 : 360;
+                const lowY = row.low === null ? null : 195 - ((row.low - dailyTempMin) / dailyTempRange) * 150;
+                const highY = row.high === null ? null : 195 - ((row.high - dailyTempMin) / dailyTempRange) * 150;
+                return <g key={String(row.day)}>
+                  {row.low !== null && row.high !== null && <line x1={x} x2={x} y1={highY ?? 0} y2={lowY ?? 0} stroke="#d88a4a" strokeWidth="8" strokeLinecap="round" />}
+                  {row.high !== null && <circle cx={x} cy={highY ?? 0} r="4" fill="#b86c39" />}
+                  {row.low !== null && <circle cx={x} cy={lowY ?? 0} r="4" fill="#648c68" />}
+                  <text x={x} y="230" textAnchor="middle" fontSize="10" fill="#758078">{forecastDate(row.day, { weekday: "short" })}</text>
+                  <text x={x} y="253" textAnchor="middle" fontSize="9" fill="#527c96">{forecastLabel(row.rain, 0, "%")} rain</text>
+                </g>;
+              })}
+              <path d={dailyRainPath} fill="none" stroke="#527c96" strokeWidth="2" strokeDasharray="4 4" />
+            </svg>
+            <div className="flex flex-wrap gap-4 text-[10px] text-[var(--muted)]"><span className="text-[#b86c39]">● Daily high</span><span className="text-[#648c68]">● Daily low</span><span className="text-[#527c96]">- - Rain probability</span><span>Average temperature swing: {averageSwing === null ? "—" : `${averageSwing.toFixed(1)}°C`}</span></div>
+          </div> : <p className="text-xs text-[var(--muted)]">Daily temperature values are not available in this response.</p>}
+        </Panel>
+      </div>
+
+      <Panel title="Seven-day farm planner">
+        <div className="overflow-x-auto"><table className="data-table min-w-[760px]"><thead><tr><th>Date</th><th>Conditions</th><th>Temperature</th><th>Rain outlook</th><th>Daylight</th><th>Weather-based planning</th></tr></thead><tbody>
+          {dailyTimes.map((day, index) => {
+            const dayCondition = weatherCondition(dailyField(daily, "weather_code", index));
+            const DayIcon = dayCondition.Icon;
+            const low = numberValue(dailyField(daily, "temperature_2m_min", index));
+            const high = numberValue(dailyField(daily, "temperature_2m_max", index));
+            const rainProbability = dailyField(daily, "precipitation_probability_max", index);
+            const rainAmount = dailyField(daily, "precipitation_sum", index);
+            return <tr key={String(day)}>
+              <td><strong>{index === 0 ? "Today" : forecastDate(day)}</strong><span className="mt-1 block text-[10px] text-[var(--muted)]">{forecastDate(day, { month: "short", day: "numeric", year: "numeric" })}</span></td>
+              <td><span className="inline-flex items-center gap-2"><DayIcon size={16} className="text-[#74836e]" />{dayCondition.label}</span></td>
+              <td>{forecastLabel(low, 1, "°")} <span className="text-[var(--muted)]">/</span> {forecastLabel(high, 1, "°C")}</td>
+              <td>{forecastLabel(rainProbability, 0, "%")} <span className="text-[var(--muted)]">· {forecastLabel(rainAmount, 1, " mm")}</span></td>
+              <td>{forecastTime(dailyField(daily, "sunrise", index))}<span className="mx-1 text-[var(--muted)]">–</span>{forecastTime(dailyField(daily, "sunset", index))}</td>
+              <td className="min-w-64 text-xs leading-5">{farmWeatherAdvice(dailyField(daily, "weather_code", index), rainProbability, high)}</td>
+            </tr>;
+          })}
+        </tbody></table>
+          {!dailyTimes.length && <p className="py-6 text-center text-xs text-[var(--muted)]">Daily forecast values are not available in this response.</p>}
+        </div>
+      </Panel>
+    </>}
     {canManageAlerts && <Panel title="Create targeted weather alert"><form onSubmit={createAlert} className="grid gap-4 md:grid-cols-2">
       <label className="field-label">Alert type<select name="alert_type" className="field-control">{["RAINFALL", "FLOOD", "HEAT", "DRY_SPELL", "PLANTING", "HARVEST", "PEST_DISEASE", "OTHER"].map((item) => <option key={item}>{item}</option>)}</select></label>
       <label className="field-label">Severity<select name="severity" className="field-control">{["LOW", "MEDIUM", "HIGH", "CRITICAL"].map((item) => <option key={item}>{item}</option>)}</select></label>
@@ -516,8 +933,8 @@ function AdvisoriesPage({ session, onToast }: Props) {
   return <>
     <Header eyebrow="Agronomy / Knowledge" title="Agricultural advisories" description="Farmers can request personalized AI guidance based on their farm, crop, activity, and local weather. Curated advisories remain independently reviewed before publication." />
     <Feedback error={error} />
-    {can(session, "advisory.generate") && <Panel title="Your personalized farm guidance">
-      <p className="mb-4 text-xs leading-5 text-[var(--muted)]">Recommendations use your farm location, recorded crops and seasons, recent activities, and the latest available forecast. Guidance is AI-generated decision support, not a guarantee or substitute for local agronomic advice.</p>
+    {can(session, "advisory.generate") && <Panel title="Personalized farm guidance">
+      <p className="mb-4 text-xs leading-5 text-[var(--muted)]">Select an authorized farm to use its location, recorded crops and seasons, recent activities, and the latest available forecast. Guidance is AI-generated decision support, not a guarantee or substitute for local agronomic advice.</p>
       <div className="mb-5 flex flex-wrap items-end gap-3">
         <label className="field-label min-w-56 flex-1">Farm
           <select className="field-control" value={selectedFarm} onChange={(event) => setSelectedFarm(event.target.value)}>
@@ -528,7 +945,7 @@ function AdvisoriesPage({ session, onToast }: Props) {
           {personalizedBusy ? "Generating…" : "Get personalized guidance"}
         </button>
       </div>
-      {farms.length === 0 ? <p className="text-xs text-[var(--muted)]">Add an active farm before requesting personalized guidance.</p>
+      {farms.length === 0 ? <p className="text-xs text-[var(--muted)]">No active farms are available to this account. Field officers can request guidance for assigned farmers’ farms.</p>
         : personalizedItems.length ? <div className="space-y-3">{personalizedItems.map((item) => <article key={String(item.id)} className="rounded-lg border border-[var(--line)] p-4">
           <div className="flex flex-wrap items-start justify-between gap-3"><div><h3 className="text-sm font-semibold">{value(item, "title", value(item, "status"))}</h3><p className="mt-1 text-[10px] text-[var(--muted)]">{value(item, "farm_name")} · {date(item.generated_at ?? item.created_at)}</p></div><Status status={value(item, "status")} /></div>
           {typeof item.content === "string" && item.content && <p className="mt-3 whitespace-pre-wrap text-xs leading-5 text-[var(--muted)]">{item.content}</p>}

@@ -63,7 +63,7 @@ function referenceRows(payload: unknown): Row[] {
   return [];
 }
 
-function ProjectReferenceSelect({ name, label, endpoint, permission, session, required = false }: { name: string; label: string; endpoint: string; permission: string; session: SessionInfo; required?: boolean }) {
+function ProjectReferenceSelect({ name, label, endpoint, permission, session, required = false, onSelect }: { name: string; label: string; endpoint: string; permission: string; required?: boolean; session: SessionInfo; onSelect?: (row: Row | null) => void }) {
   const [rows, setRows] = useState<Row[]>([]);
   const [error, setError] = useState<unknown>(null);
   const [retry, setRetry] = useState(0);
@@ -76,7 +76,9 @@ function ProjectReferenceSelect({ name, label, endpoint, permission, session, re
       .catch((reason: unknown) => { if (active) setError(reason); });
     return () => { active = false; };
   }, [allowed, endpoint, retry]);
-  return <label className="field-label">{label}<select className="field-control" name={name} defaultValue="" required={required} disabled={!allowed || Boolean(error)}><option value="">Select {label.toLowerCase()}…</option>{rows.map((row) => {
+  return <label className="field-label">{label}<select className="field-control" name={name} defaultValue="" required={required} disabled={!allowed || Boolean(error)} onChange={(event) => {
+    if (onSelect) onSelect(rows.find((row) => rowString(row, "id") === event.target.value) ?? null);
+  }}><option value="">Select {label.toLowerCase()}…</option>{rows.map((row) => {
     const id = rowString(row, "id", "");
     const display = name === "farm"
       ? `${rowString(row, "name", "Farm")}${row.farmer_name ? ` · ${rowString(row, "farmer_name")}` : ""}`
@@ -87,7 +89,7 @@ function ProjectReferenceSelect({ name, label, endpoint, permission, session, re
   })}</select>{Boolean(error) && <span role="alert" className="field-hint text-[#a34e3d]">Could not load choices: {errorMessage(error)} <button type="button" className="font-semibold underline" onClick={() => { setError(null); setRetry((value) => value + 1); }}>Retry</button></span>}</label>;
 }
 
-function ProjectLocationFields() {
+function ProjectLocationFields({ farm }: { farm: Row | null }) {
   const [states, setStates] = useState<Row[]>([]);
   const [lgas, setLgas] = useState<Row[]>([]);
   const [wards, setWards] = useState<Row[]>([]);
@@ -102,6 +104,81 @@ function ProjectLocationFields() {
   const [communityName, setCommunityName] = useState("");
   const [error, setError] = useState<unknown>(null);
   const [retry, setRetry] = useState(0);
+
+  useEffect(() => {
+    if (!farm) return;
+    const selectedFarm = farm;
+    let active = true;
+    async function populateLocation() {
+      try {
+        const availableStates = await apiRequest<Row[]>("geography/states");
+        const selectedState = availableStates.find((item) =>
+          (selectedFarm.state_id && String(item.id) === String(selectedFarm.state_id))
+          || (!selectedFarm.state_id && rowString(item, "name").toLocaleLowerCase() === rowString(selectedFarm, "state_name", "").toLocaleLowerCase()),
+        );
+        if (!selectedState) {
+          if (active) {
+            setStateId("");
+            setStateName("");
+            setLgaId(""); setWardId(""); setCommunityId("");
+            setLgaName(""); setWardName(""); setCommunityName("");
+            setLgas([]); setWards([]); setCommunities([]);
+            setError(null);
+          }
+          return;
+        }
+
+        let availableLgas: Row[] = [];
+        let selectedLga: Row | undefined;
+        let availableWards: Row[] = [];
+        let selectedWard: Row | undefined;
+        let availableCommunities: Row[] = [];
+        let selectedCommunity: Row | undefined;
+
+        if (selectedFarm.lga_id || selectedFarm.lga_name) {
+          availableLgas = await apiRequest<Row[]>(`geography/states/${String(selectedState.id)}/lgas`);
+          selectedLga = availableLgas.find((item) =>
+            (selectedFarm.lga_id && String(item.id) === String(selectedFarm.lga_id))
+            || (!selectedFarm.lga_id && rowString(item, "name").toLocaleLowerCase() === rowString(selectedFarm, "lga_name", "").toLocaleLowerCase()),
+          );
+        }
+        if (selectedLga && (selectedFarm.ward_id || selectedFarm.ward_name)) {
+          availableWards = await apiRequest<Row[]>(`geography/lgas/${String(selectedLga.id)}/wards`);
+          selectedWard = availableWards.find((item) =>
+            (selectedFarm.ward_id && String(item.id) === String(selectedFarm.ward_id))
+            || (!selectedFarm.ward_id && rowString(item, "name").toLocaleLowerCase() === rowString(selectedFarm, "ward_name", "").toLocaleLowerCase()),
+          );
+        }
+        if (selectedWard && (selectedFarm.community_id || selectedFarm.community_name)) {
+          availableCommunities = await apiRequest<Row[]>(`geography/wards/${String(selectedWard.id)}/communities`);
+          selectedCommunity = availableCommunities.find((item) =>
+            (selectedFarm.community_id && String(item.id) === String(selectedFarm.community_id))
+            || (!selectedFarm.community_id && rowString(item, "name").toLocaleLowerCase() === rowString(selectedFarm, "community_name", "").toLocaleLowerCase()),
+          );
+        }
+
+        if (active) {
+          setStates(availableStates);
+          setLgas(availableLgas);
+          setWards(availableWards);
+          setCommunities(availableCommunities);
+          setStateId(String(selectedState.id));
+          setStateName(rowString(selectedState, "name", ""));
+          setLgaId(selectedLga ? String(selectedLga.id) : "");
+          setLgaName(selectedLga ? rowString(selectedLga, "name", "") : "");
+          setWardId(selectedWard ? String(selectedWard.id) : "");
+          setWardName(selectedWard ? rowString(selectedWard, "name", "") : "");
+          setCommunityId(selectedCommunity ? String(selectedCommunity.id) : "");
+          setCommunityName(selectedCommunity ? rowString(selectedCommunity, "name", "") : "");
+          setError(null);
+        }
+      } catch (reason) {
+        if (active) setError(reason);
+      }
+    }
+    void populateLocation();
+    return () => { active = false; };
+  }, [farm]);
 
   useEffect(() => {
     let active = true;
@@ -187,6 +264,7 @@ function ProjectCreate({ session, onToast }: { session: SessionInfo; onToast: (m
   const router = useRouter();
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<unknown>(null);
+  const [selectedFarm, setSelectedFarm] = useState<Row | null>(null);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -212,10 +290,10 @@ function ProjectCreate({ session, onToast }: { session: SessionInfo; onToast: (m
 
   return <><PageHeader eyebrow="Projects / Administration" title="Create project" description="Create a draft. Add approved economics before review and publication." /><Feedback error={error} /><Panel title="Project terms"><form onSubmit={submit} className="grid gap-4 md:grid-cols-2">
     <Field name="title" label="Project name" required />
-    <ProjectReferenceSelect name="farm" label="Farm" endpoint="farms/farms" permission="farm.read" session={session} required />
+    <ProjectReferenceSelect name="farm" label="Farm" endpoint="farms/farms" permission="farm.read" session={session} required onSelect={setSelectedFarm} />
     <ProjectReferenceSelect name="crop" label="Crop" endpoint="crops/crops" permission="crop.read" session={session} />
     <ProjectReferenceSelect name="season" label="Season" endpoint="seasons" permission="season.read" session={session} />
-    <ProjectLocationFields />
+    <ProjectLocationFields farm={selectedFarm} />
     <Field name="duration_start" label="Duration start" type="date" /><Field name="duration_end" label="Duration end" type="date" />
     <Field name="funding_target" label="Funding target" type="number" required /><Field name="minimum_participation" label="Minimum participation" type="number" required />
     <Field name="currency" label="Currency" defaultValue="NGN" required />
@@ -262,6 +340,7 @@ function ProjectDetail({ id, session, onToast }: { id: string; session: SessionI
   const [error, setError] = useState<unknown>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState("");
+  const [economicsFormula, setEconomicsFormula] = useState<"PRINCIPAL_PERCENT" | "PROFIT_SHARE">("PRINCIPAL_PERCENT");
   const isAdmin = can(session, "project.approve");
   const canInvest = can(session, "investment.create");
   const canUploadProjectDocuments = can(session, "project.update") && can(session, "document.create");
@@ -513,7 +592,22 @@ function ProjectDetail({ id, session, onToast }: { id: string; session: SessionI
       {lifecycleActions.some((action) => ["approve", "publish"].includes(action)) && !governanceRequirementsMet && <p className="mb-3 text-xs leading-5 text-[#964d3e]">Before approval or publication, record an approved Sharia governance review and link at least one confirmed supporting document.</p>}
       <div className="flex flex-wrap gap-2">{lifecycleActions.map((action) => <PrimaryButton key={action} type="button" disabled={busy || (["approve", "publish"].includes(action) && !governanceRequirementsMet)} onClick={() => void transition(action)}>{action[0].toUpperCase() + action.slice(1)}</PrimaryButton>)}</div>
     </Panel>}
-    {can(session, "project.economics.manage") && <Panel title="Versioned approved economics"><form onSubmit={configureEconomics} className="grid gap-3 md:grid-cols-2"><label className="field-label">Formula<select className="field-control" name="formula_type"><option value="PRINCIPAL_PERCENT">Principal percentage</option><option value="PROFIT_SHARE">Profit-share pool</option></select></label><Field name="return_percent" label="Return percentage" type="number" defaultValue="0" /><Field name="profit_pool" label="Profit pool" type="number" defaultValue="0" /><Field name="investor_share_percent" label="Investor share (%)" type="number" defaultValue="0" /><Field name="project_fee" label="Configured fee" type="number" defaultValue="0" /><div className="md:col-span-2"><PrimaryButton disabled={busy}>Save approved economics version</PrimaryButton></div></form></Panel>}
+    {can(session, "project.economics.manage") && <Panel title="Versioned approved economics">
+      <form onSubmit={configureEconomics} className="grid gap-3 md:grid-cols-2">
+        <label className="field-label">Formula<select className="field-control" name="formula_type" value={economicsFormula} onChange={(event) => setEconomicsFormula(event.target.value === "PROFIT_SHARE" ? "PROFIT_SHARE" : "PRINCIPAL_PERCENT")}><option value="PRINCIPAL_PERCENT">Principal percentage</option><option value="PROFIT_SHARE">Profit Share</option></select></label>
+        {economicsFormula === "PRINCIPAL_PERCENT"
+          ? <Field name="return_percent" label="Return percentage" type="number" defaultValue="0" />
+          : <><Field name="profit_pool" label="Profit pool" type="number" defaultValue="0" /><Field name="investor_share_percent" label="Investor share (%)" type="number" defaultValue="0" /></>}
+        <Field name="project_fee" label="Configured fee" type="number" defaultValue="0" />
+        <p className="field-hint md:col-span-2">
+          {economicsFormula === "PRINCIPAL_PERCENT"
+            ? "Principal Percentage: expected profit is the participation amount multiplied by the return percentage."
+            : "Profit Share: expected profit is the project profit pool multiplied by the investor’s proportion of the project funding target, then multiplied by the investor share percentage. If no target is set, confirmed participation is used as the denominator."}
+        </p>
+        <p className="field-hint md:col-span-2">Configured fee is deducted from the expected settlement. Saving creates a new version; existing participations keep their saved economics.</p>
+        <div className="md:col-span-2"><PrimaryButton disabled={busy}>Save approved economics version</PrimaryButton></div>
+      </form>
+    </Panel>}
     {isAdmin && <Panel title="Sharia metadata">
       {sharia.length > 0 && <div className="mb-4 space-y-3 border-b border-[var(--line)] pb-4 text-xs leading-5">{sharia.map((review) => <div key={rowString(review, "id")}><strong>{rowString(review, "structure_type")}</strong> · {rowString(review, "review_status")}<p>{rowString(review, "terms", "No terms recorded.")}</p>{rowString(review, "risk_disclosure", "") && <p>Risks: {rowString(review, "risk_disclosure")}</p>}<p className="text-[var(--muted)]">Reviewer: {rowString(review, "reviewer_name", "Recorded by an authorized user")} · {rowString(review, "approval_date", "No approval date")}</p></div>)}</div>}
       <form onSubmit={recordShariaMetadata} className="grid gap-3 md:grid-cols-2">

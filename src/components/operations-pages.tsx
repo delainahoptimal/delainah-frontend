@@ -35,6 +35,12 @@ function isSuperAdmin(session: SessionInfo) {
   return session.user.user_type === "SUPER_ADMIN" || session.roles.some((role) => role.code === "SUPER_ADMIN");
 }
 
+function isFieldOfficer(session: SessionInfo) {
+  return session.roles.some((role) => role.code === "FIELD_OFFICER")
+    && !session.roles.some((role) => role.code === "ADMIN" || role.code === "SUPER_ADMIN")
+    && session.user.user_type !== "SUPER_ADMIN";
+}
+
 function getRows(payload: unknown): Row[] {
   if (Array.isArray(payload)) return payload as Row[];
   if (payload && typeof payload === "object" && "results" in payload) {
@@ -346,6 +352,8 @@ function ServiceRequestsPage({ session, onToast }: { session: SessionInfo; onToa
   const canCreate = permitted(session, "service_request.create");
   const canManageServices = permitted(session, "service.manage") || isSuperAdmin(session);
   const canVerifyPayments = permitted(session, "service_payment.verify");
+  const fieldOfficer = isFieldOfficer(session);
+  const [selectedFarmerId, setSelectedFarmerId] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -377,10 +385,11 @@ function ServiceRequestsPage({ session, onToast }: { session: SessionInfo; onToa
     const form = new FormData(formElement);
     const body = Object.fromEntries([...form.entries()].filter(([, value]) => String(value).trim() !== ""));
     if (session.user.user_type === "FARMER") delete body.farmer;
+    if (fieldOfficer) body.submit = "true";
     try {
       const result = await apiRequest<Row>("service-requests/service-requests", { method: "POST", body });
       setSuccess(`Service request ${String(result.request_reference ?? "")} created.`);
-      formElement.reset(); await load(); onToast("Service request created.");
+      formElement.reset(); setSelectedFarmerId(""); await load(); onToast("Service request created.");
     } catch (reason) { setError(reason); }
     finally { setBusy(false); }
   }
@@ -465,10 +474,10 @@ function ServiceRequestsPage({ session, onToast }: { session: SessionInfo; onToa
     {canCreate && <SectionCard title="Create a service request" description="Farmers can request service for their own farm. Field Officers must select the assigned farmer.">
       {success && <Notice error={null} success={success} />}
       <form onSubmit={createRequest} className="grid gap-4 p-5 sm:grid-cols-2 xl:grid-cols-3">
-        {session.user.user_type !== "FARMER" && <label className="field-label">Farmer (optional for customer requests)<select className="field-control" name="farmer" defaultValue=""><option value="">Customer without farmer profile…</option>{farmers.map((farmer) => <option key={String(farmer.id)} value={String(farmer.id)}>{`${farmer.farmer_number ?? farmer.provisional_reference ?? "Farmer"} · ${[farmer.first_name, farmer.last_name].filter(Boolean).map(String).join(" ") || String(farmer.email ?? "—")}`}</option>)}</select></label>}
-        {session.user.user_type !== "FARMER" && <TextField name="customer_name" label="Customer name" hint="Required when no farmer profile is selected." />}
-        {session.user.user_type !== "FARMER" && <TextField name="customer_phone" label="Customer phone" hint="Required when no farmer profile is selected." />}
-        <SelectField name="farm" label="Farm (optional for customer requests)" rows={farms} />
+            {session.user.user_type !== "FARMER" && <label className="field-label">Farmer{fieldOfficer ? "" : " (optional for customer requests)"}<select className="field-control" name="farmer" required={fieldOfficer} value={selectedFarmerId} onChange={(event) => setSelectedFarmerId(event.target.value)}><option value="">{fieldOfficer ? "Select an assigned farmer…" : "Customer without farmer profile…"}</option>{farmers.map((farmer) => <option key={String(farmer.id)} value={String(farmer.id)}>{`${farmer.farmer_number ?? farmer.provisional_reference ?? "Farmer"} · ${[farmer.first_name, farmer.last_name].filter(Boolean).map(String).join(" ") || String(farmer.email ?? "—")}`}</option>)}</select></label>}
+            {!fieldOfficer && session.user.user_type !== "FARMER" && <TextField name="customer_name" label="Customer name" hint="Required when no farmer profile is selected." />}
+            {!fieldOfficer && session.user.user_type !== "FARMER" && <TextField name="customer_phone" label="Customer phone" hint="Required when no farmer profile is selected." />}
+            <SelectField name="farm" label={fieldOfficer ? "Farm" : "Farm (optional for customer requests)"} rows={farms.filter((farm) => !fieldOfficer || !selectedFarmerId || String(farm.farmer_id) === selectedFarmerId)} required={fieldOfficer} />
         <SelectField name="service" label="Service" rows={services} required />
         <SelectField name="crop" label="Crop (optional)" rows={crops} />
         <SelectField name="season" label="Season (optional)" rows={seasons} />
@@ -688,14 +697,15 @@ function MachineryPage({ session, onToast }: { session: SessionInfo; onToast: (m
   const canMaintain = permitted(session, "machinery.maintenance");
   const canReadUtilization = permitted(session, "machinery.utilization.read");
   const canReadAssignmentHistory = canRead && hasOperationsScope(session);
+  const fieldOfficer = isFieldOfficer(session);
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
     try {
       const [assetData, operatorData, maintenanceData, utilizationData] = await Promise.all([
         canRead ? apiRequest<unknown>("machinery/machinery") : Promise.resolve([]),
-        canRead ? apiRequest<unknown>("operators/operators") : Promise.resolve([]),
-        canRead ? apiRequest<unknown>("machinery/maintenance") : Promise.resolve([]),
+        canRead && !fieldOfficer ? apiRequest<unknown>("operators/operators") : Promise.resolve([]),
+        canRead && !fieldOfficer ? apiRequest<unknown>("machinery/maintenance") : Promise.resolve([]),
         canReadUtilization ? apiRequest<unknown>("machinery/utilization") : Promise.resolve({ results: [] }),
       ]);
       setAssets(getRows(assetData));
@@ -705,7 +715,7 @@ function MachineryPage({ session, onToast }: { session: SessionInfo; onToast: (m
     }
     catch (reason) { setError(reason); }
     finally { setLoading(false); }
-  }, [canRead, canReadUtilization]);
+  }, [canRead, canReadUtilization, fieldOfficer]);
   useEffect(() => {
     if (!canRead && !canCreate && !canMaintain && !canReadUtilization) return;
     const timer = window.setTimeout(() => { void load(); }, 0);
@@ -777,7 +787,7 @@ function MachineryPage({ session, onToast }: { session: SessionInfo; onToast: (m
     {canUpdate && editingAsset && <SectionCard title={`Edit ${String(editingAsset.asset_code)}`} actions={<button className="secondary-button" onClick={() => setEditingAsset(null)}>Cancel</button>}><form onSubmit={updateAsset} className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-3"><TextField name="name" label="Name" defaultValue={String(editingAsset.name ?? "")} /><OperationalOptionSelect kind="MACHINERY_TYPE" name="type" label="Machinery type" required defaultValue={String(editingAsset.type ?? "")} isSuperAdmin={isSuperAdmin(session)} /><TextField name="serial_number" label="Serial number" defaultValue={String(editingAsset.serial_number ?? "")} /><TextField name="location" label="Location" defaultValue={String(editingAsset.location ?? "")} /><TextField name="condition" label="Condition" defaultValue={String(editingAsset.condition ?? "")} /><button disabled={busy} className="primary-button">Save machinery</button></form></SectionCard>}
     {selected && <SectionCard title="Assignment history" actions={<button className="secondary-button" onClick={() => setSelected("")}>Close</button>}><DataTable columns={[{ key: "service_request", label: "Service request" }, { key: "operator_name", label: "Operator" }, { key: "assigned_by_name", label: "Assigned by" }, { key: "assigned_at", label: "Assigned at" }, { key: "returned_at", label: "Returned at" }, { key: "status", label: "Status", status: true }]} rows={assignments} empty="No assignments recorded for this asset." /></SectionCard>}
     {canCreate && <SectionCard title="Register machinery"><form onSubmit={create} className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-3"><TextField name="asset_code" label="Asset code" required /><TextField name="name" label="Name" required /><OperationalOptionSelect kind="MACHINERY_TYPE" name="type" label="Machinery type" required isSuperAdmin={isSuperAdmin(session)} /><TextField name="serial_number" label="Serial number" /><TextField name="location" label="Location" /><TextField name="condition" label="Condition" /><label className="field-label">Initial status<select className="field-control" name="status" defaultValue="AVAILABLE">{["AVAILABLE", "IN_USE", "MAINTENANCE", "DECOMMISSIONED"].map((status) => <option key={status}>{status}</option>)}</select></label><div className="sm:col-span-2 lg:col-span-3"><button disabled={busy} className="primary-button"><Plus size={14} /> Add machinery</button></div></form></SectionCard>}
-    {(canRead || canCreate) && <SectionCard title="Operator records">
+    {!fieldOfficer && (canRead || canCreate) && <SectionCard title="Operator records">
       {canRead && (operators.length ? <div className="overflow-x-auto"><table className="data-table"><thead><tr><th>Operator</th><th>Phone</th><th>License</th><th>Status</th>{canUpdate && <th>Manage</th>}</tr></thead><tbody>{operators.map((operator) => <tr key={String(operator.id)}><td>{label(operator.name)}</td><td>{label(operator.phone)}</td><td>{label(operator.license_reference)}</td><td>{titleCase(operator.status)}</td>{canUpdate && <td><button className="secondary-button min-h-8" onClick={() => setEditingOperator(operator)}>Edit</button></td>}</tr>)}</tbody></table></div> : <p className="px-5 py-5 text-sm text-[var(--muted)]">No operators are registered.</p>)}
       {canRead && editingOperator && <form onSubmit={updateOperator} className="grid gap-3 border-t border-[var(--line)] p-5 sm:grid-cols-2 lg:grid-cols-4"><TextField name="name" label="Operator name" required defaultValue={String(editingOperator.name ?? "")} /><TextField name="phone" label="Phone" defaultValue={String(editingOperator.phone ?? "")} /><TextField name="license_reference" label="License reference" defaultValue={String(editingOperator.license_reference ?? "")} /><label className="field-label">Status<select className="field-control" name="status" defaultValue={String(editingOperator.status ?? "ACTIVE")}><option value="ACTIVE">Active</option><option value="INACTIVE">Inactive</option></select></label><div className="flex gap-2 sm:col-span-2 lg:col-span-4"><button disabled={busy} className="primary-button">Save operator</button><button type="button" className="secondary-button" onClick={() => setEditingOperator(null)}>Cancel</button></div></form>}
       {canCreate && <form onSubmit={createOperator} className="grid gap-3 border-t border-[var(--line)] p-5 sm:grid-cols-2 lg:grid-cols-4"><TextField name="name" label="Operator name" required /><TextField name="phone" label="Phone" /><TextField name="license_reference" label="License reference" /><button disabled={busy} className="secondary-button self-end">Add operator</button></form>}
@@ -817,6 +827,8 @@ function ProducePage({ session, onToast }: { session: SessionInfo; onToast: (mes
   const canCreate = permitted(session, "produce.create");
   const canUpdate = permitted(session, "produce.update");
   const can = (permission: string) => permitted(session, permission);
+  const fieldOfficer = isFieldOfficer(session);
+  const [selectedFarmerId, setSelectedFarmerId] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -843,7 +855,7 @@ function ProducePage({ session, onToast }: { session: SessionInfo; onToast: (mes
     const formElement = event.currentTarget;
     const body = Object.fromEntries([...new FormData(formElement).entries()].filter(([, value]) => String(value).trim() !== ""));
     if (session.user.user_type === "FARMER") delete body.farmer;
-    try { const result = await apiRequest<Row>("produce/listings", { method: "POST", body }); setSuccess(`Produce listing ${String(result.offer_reference ?? "")} created.`); formElement.reset(); onToast("Produce listing created."); await load(); }
+    try { const result = await apiRequest<Row>("produce/listings", { method: "POST", body });     setSuccess(`Produce listing ${String(result.offer_reference ?? "")} created.`); formElement.reset(); setSelectedFarmerId(""); onToast("Produce listing created."); await load(); }
     catch (reason) { setError(reason); }
     finally { setBusy(false); }
   }
@@ -880,12 +892,12 @@ function ProducePage({ session, onToast }: { session: SessionInfo; onToast: (mes
     {editingOffer && <SectionCard title={`Edit ${String(editingOffer.offer_reference)}`} actions={<button className="secondary-button" onClick={() => setEditingOffer(null)}>Cancel</button>}><form onSubmit={updateOffer} className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-3"><TextField name="quantity" label="Quantity" type="number" defaultValue={String(editingOffer.quantity ?? "")} /><TextField name="unit" label="Unit" defaultValue={String(editingOffer.unit ?? "")} /><TextField name="expected_harvest_at" label="Expected harvest date" type="date" defaultValue={String(editingOffer.expected_harvest_at ?? "")} /><label className="field-label">Harvest status<select className="field-control" name="harvest_status" defaultValue={String(editingOffer.harvest_status ?? "EXPECTED")}><option value="EXPECTED">Expected</option><option value="READY">Ready for harvest</option><option value="HARVESTED">Harvested</option></select></label><OperationalOptionSelect kind="PRODUCE_QUALITY_GRADE" name="quality_grade" label="Quality grade" defaultValue={String(editingOffer.quality_grade ?? "")} isSuperAdmin={isSuperAdmin(session)} /><TextField name="location" label="Collection location" defaultValue={String(editingOffer.location ?? "")} /><TextField name="asking_price" label="Asking price (NGN)" type="number" defaultValue={String(editingOffer.asking_price ?? "")} /><button disabled={busy} className="primary-button">Save listing</button></form></SectionCard>}
     {canCreate && <SectionCard title="Create produce listing" description="Create a draft offer, then submit it for review and quality assessment.">
       <form onSubmit={create} className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-3">
-        {session.user.user_type !== "FARMER" && <label className="field-label">Farmer (optional)<select className="field-control" name="farmer" defaultValue=""><option value="">Select a farmer…</option>{farmers.map((farmer) => {
+        {session.user.user_type !== "FARMER" && <label className="field-label">Farmer{fieldOfficer ? "" : " (optional)"}<select className="field-control" name="farmer" required={fieldOfficer} value={selectedFarmerId} onChange={(event) => setSelectedFarmerId(event.target.value)}><option value="">Select a farmer…</option>{farmers.map((farmer) => {
           const farmerName = [farmer.first_name, farmer.last_name].filter(Boolean).map(String).join(" ") || String(farmer.email ?? "Farmer");
           const farmerNumber = farmer.farmer_number ? ` · ${String(farmer.farmer_number)}` : "";
           return <option key={String(farmer.id)} value={String(farmer.id)}>{farmerName}{farmerNumber}</option>;
         })}</select><span className="field-hint">Choose a farmer by name for this assisted listing.</span></label>}
-        <SelectField name="farm" label="Farm" rows={farms} required /><SelectField name="crop" label="Crop" rows={crops} required /><SelectField name="season" label="Season (optional)" rows={seasons} />
+        <SelectField name="farm" label="Farm" rows={farms.filter((farm) => !fieldOfficer || !selectedFarmerId || String(farm.farmer_id) === selectedFarmerId)} required /><SelectField name="crop" label="Crop" rows={crops} required /><SelectField name="season" label="Season (optional)" rows={seasons} />
         <TextField name="quantity" label="Quantity" type="number" required /><TextField name="unit" label="Unit" hint="For example KG or TONS." /><TextField name="asking_price" label="Asking price (NGN)" type="number" required />
         <TextField name="expected_harvest_at" label="Expected harvest date" type="date" /><label className="field-label">Harvest status<select className="field-control" name="harvest_status" defaultValue="EXPECTED"><option value="EXPECTED">Expected</option><option value="READY">Ready for harvest</option><option value="HARVESTED">Harvested</option></select></label><OperationalOptionSelect kind="PRODUCE_QUALITY_GRADE" name="quality_grade" label="Quality grade" isSuperAdmin={isSuperAdmin(session)} /><TextField name="location" label="Collection location" />
         <div className="sm:col-span-2 lg:col-span-3"><button disabled={busy} className="primary-button"><Plus size={14} /> Create listing</button></div>
