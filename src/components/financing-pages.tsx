@@ -34,6 +34,87 @@ function Panel({ title, children }: { title: string; children: ReactNode }) {
   return <section className="surface-panel p-5 sm:p-6"><h2 className="text-sm font-semibold">{title}</h2><div className="mt-4">{children}</div></section>;
 }
 
+const financeStructures = [
+  {
+    label: "Islamic finance",
+    options: [
+      "Murabaha",
+      "Mudarabah",
+      "Musharakah",
+      "Diminishing Musharakah",
+      "Ijarah",
+      "Ijarah wa Iqtina",
+      "Salam",
+      "Parallel Salam",
+      "Istisna'a",
+      "Parallel Istisna'a",
+      "Qard Hasan",
+      "Tawarruq",
+      "Wakalah",
+      "Muzara'ah",
+      "Musaqah",
+    ],
+  },
+  {
+    label: "Conventional finance",
+    options: [
+      "Term loan",
+      "Working capital loan",
+      "Revolving credit facility",
+      "Overdraft",
+      "Asset finance",
+      "Equipment loan",
+      "Operating lease",
+      "Finance lease",
+      "Hire purchase",
+      "Invoice financing",
+      "Receivables financing",
+      "Supply chain finance",
+      "Purchase order finance",
+      "Equity investment",
+      "Joint venture",
+      "Grant",
+      "Blended finance",
+    ],
+  },
+];
+
+const standardFinanceStructures = financeStructures.flatMap((group) => group.options);
+
+function FinanceStructureField({ value }: { value: string }) {
+  const isStandard = value === "" || standardFinanceStructures.includes(value);
+  const [customStructure, setCustomStructure] = useState(value !== "" && !isStandard);
+
+  return <>
+    <label className="field-label">Finance structure
+      <select
+        className="field-control"
+        name="structure_type"
+        required
+        defaultValue={value === "" ? "" : isStandard ? value : "OTHER"}
+        onChange={(event) => setCustomStructure(event.target.value === "OTHER")}
+      >
+        <option value="" disabled>Select a structure…</option>
+        {financeStructures.map((group) => <optgroup key={group.label} label={group.label}>
+          {group.options.map((structure) => <option key={structure} value={structure}>{structure}</option>)}
+        </optgroup>)}
+        <option value="OTHER">Other (specify)</option>
+      </select>
+    </label>
+    {customStructure && <label className="field-label">Specify finance structure
+      <input
+        className="field-control"
+        name="custom_structure_type"
+        required
+        maxLength={120}
+        defaultValue={isStandard ? "" : value}
+        placeholder="Enter the approved structure name"
+      />
+      <span className="field-hint">Use this for existing custom structures or a model not listed above.</span>
+    </label>}
+  </>;
+}
+
 export default function FinancingPages({ session }: { session: SessionInfo }) {
   const [products, setProducts] = useState<Row[]>([]);
   const [applications, setApplications] = useState<Row[]>([]);
@@ -125,9 +206,12 @@ export default function FinancingPages({ session }: { session: SessionInfo }) {
     event.preventDefault();
     const values = Object.fromEntries(new FormData(event.currentTarget).entries());
     const productId = editingProduct ? String(editingProduct.id) : "";
+    const selectedStructure = String(values.structure_type ?? "");
     const payload = {
       name: String(values.name ?? ""),
-      structure_type: String(values.structure_type ?? ""),
+      structure_type: selectedStructure === "OTHER"
+        ? String(values.custom_structure_type ?? "").trim()
+        : selectedStructure,
       description: String(values.description ?? ""),
       currency: String(values.currency ?? "NGN"),
       max_amount: values.max_amount ? String(values.max_amount) : null,
@@ -195,7 +279,7 @@ export default function FinancingPages({ session }: { session: SessionInfo }) {
       {editingProduct && <button className="mb-3 text-xs font-semibold text-[var(--leaf)]" onClick={() => setEditingProduct(null)}>Cancel editing</button>}
       <form key={String(editingProduct?.id ?? "new-product")} onSubmit={saveProduct} className="grid gap-3 sm:grid-cols-2">
         <label className="field-label">Product name<input className="field-control" name="name" required defaultValue={String(editingProduct?.name ?? "")} /></label>
-        <label className="field-label">Finance structure<input className="field-control" name="structure_type" required placeholder="e.g. Murabaha" defaultValue={String(editingProduct?.structure_type ?? "")} /></label>
+        <FinanceStructureField value={String(editingProduct?.structure_type ?? "")} />
         <label className="field-label">Maximum amount (optional)<input className="field-control" name="max_amount" type="number" min="0.01" step="0.01" defaultValue={String(editingProduct?.max_amount ?? "")} /></label>
         <label className="field-label">Currency<input className="field-control" name="currency" maxLength={8} required defaultValue={String(editingProduct?.currency ?? "NGN")} /></label>
         <label className="field-label sm:col-span-2">Description<textarea className="field-control min-h-20 py-2" name="description" defaultValue={String(editingProduct?.description ?? "")} /></label>

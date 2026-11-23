@@ -9,6 +9,7 @@ import { useCallback, useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { apiRequest, errorMessage } from "@/lib/api";
 import type { RoleGrant, SessionUser } from "@/lib/api";
+import { farmLocationText, farmSizeInAcres } from "@/lib/farm-form-values";
 import { CoordinateFields } from "@/components/location-inputs";
 import OperationalOptionSelect from "@/components/operational-option-select";
 
@@ -97,12 +98,12 @@ function DataTable({ columns, rows, empty }: { columns: { key: string; label: st
   </tbody></table></div>;
 }
 
-function TextField({ name, label: fieldLabel, type = "text", required = false, hint, defaultValue, disabled = false }: { name: string; label: string; type?: string; required?: boolean; hint?: string; defaultValue?: string; disabled?: boolean }) {
-  return <label className="field-label">{fieldLabel}<input className="field-control" name={name} type={type} required={required} disabled={disabled} min={type === "number" ? 0 : undefined} step={type === "number" ? "any" : undefined} defaultValue={defaultValue} />{hint && <span className="field-hint">{hint}</span>}</label>;
+function TextField({ name, label: fieldLabel, type = "text", required = false, hint, defaultValue, value, onChange, disabled = false }: { name: string; label: string; type?: string; required?: boolean; hint?: string; defaultValue?: string; value?: string; onChange?: (value: string) => void; disabled?: boolean }) {
+  return <label className="field-label">{fieldLabel}<input className="field-control" name={name} type={type} required={required} disabled={disabled} min={type === "number" ? 0 : undefined} step={type === "number" ? "any" : undefined} {...(value === undefined ? { defaultValue } : { value })} onChange={onChange ? (event) => onChange(event.target.value) : undefined} />{hint && <span className="field-hint">{hint}</span>}</label>;
 }
 
-function SelectField({ name, label: fieldLabel, rows, required = false, includeBlank = true }: { name: string; label: string; rows: Row[]; required?: boolean; includeBlank?: boolean }) {
-  return <label className="field-label">{fieldLabel}<select className="field-control" name={name} required={required} defaultValue=""><>{includeBlank && <option value="">Select…</option>}{rows.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.name ?? row.service_name ?? row.farm_name ?? row.asset_code ?? row.offer_reference ?? row.id)}</option>)}</></select></label>;
+function SelectField({ name, label: fieldLabel, rows, required = false, includeBlank = true, value, onChange }: { name: string; label: string; rows: Row[]; required?: boolean; includeBlank?: boolean; value?: string; onChange?: (value: string, row?: Row) => void }) {
+  return <label className="field-label">{fieldLabel}<select className="field-control" name={name} required={required} {...(value === undefined ? { defaultValue: "" } : { value })} onChange={onChange ? (event) => onChange(event.target.value, rows.find((row) => String(row.id) === event.target.value)) : undefined}><>{includeBlank && <option value="">Select…</option>}{rows.map((row) => <option key={String(row.id)} value={String(row.id)}>{String(row.name ?? row.service_name ?? row.farm_name ?? row.asset_code ?? row.offer_reference ?? row.id)}</option>)}</></select></label>;
 }
 
 function SectionCard({ title, description, children, actions }: { title: string; description?: string; children: ReactNode; actions?: ReactNode }) {
@@ -354,6 +355,9 @@ function ServiceRequestsPage({ session, onToast }: { session: SessionInfo; onToa
   const canVerifyPayments = permitted(session, "service_payment.verify");
   const fieldOfficer = isFieldOfficer(session);
   const [selectedFarmerId, setSelectedFarmerId] = useState("");
+  const [selectedFarmId, setSelectedFarmId] = useState("");
+  const [farmAcreage, setFarmAcreage] = useState("");
+  const [farmLocation, setFarmLocation] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -389,7 +393,7 @@ function ServiceRequestsPage({ session, onToast }: { session: SessionInfo; onToa
     try {
       const result = await apiRequest<Row>("service-requests/service-requests", { method: "POST", body });
       setSuccess(`Service request ${String(result.request_reference ?? "")} created.`);
-      formElement.reset(); setSelectedFarmerId(""); await load(); onToast("Service request created.");
+      formElement.reset(); setSelectedFarmerId(""); setSelectedFarmId(""); setFarmAcreage(""); setFarmLocation(""); await load(); onToast("Service request created.");
     } catch (reason) { setError(reason); }
     finally { setBusy(false); }
   }
@@ -474,16 +478,20 @@ function ServiceRequestsPage({ session, onToast }: { session: SessionInfo; onToa
     {canCreate && <SectionCard title="Create a service request" description="Farmers can request service for their own farm. Field Officers must select the assigned farmer.">
       {success && <Notice error={null} success={success} />}
       <form onSubmit={createRequest} className="grid gap-4 p-5 sm:grid-cols-2 xl:grid-cols-3">
-            {session.user.user_type !== "FARMER" && <label className="field-label">Farmer{fieldOfficer ? "" : " (optional for customer requests)"}<select className="field-control" name="farmer" required={fieldOfficer} value={selectedFarmerId} onChange={(event) => setSelectedFarmerId(event.target.value)}><option value="">{fieldOfficer ? "Select an assigned farmer…" : "Customer without farmer profile…"}</option>{farmers.map((farmer) => <option key={String(farmer.id)} value={String(farmer.id)}>{`${farmer.farmer_number ?? farmer.provisional_reference ?? "Farmer"} · ${[farmer.first_name, farmer.last_name].filter(Boolean).map(String).join(" ") || String(farmer.email ?? "—")}`}</option>)}</select></label>}
+            {session.user.user_type !== "FARMER" && <label className="field-label">Farmer{fieldOfficer ? "" : " (optional for customer requests)"}<select className="field-control" name="farmer" required={fieldOfficer} value={selectedFarmerId} onChange={(event) => { setSelectedFarmerId(event.target.value); setSelectedFarmId(""); setFarmAcreage(""); setFarmLocation(""); }}><option value="">{fieldOfficer ? "Select an assigned farmer…" : "Customer without farmer profile…"}</option>{farmers.map((farmer) => <option key={String(farmer.id)} value={String(farmer.id)}>{`${farmer.farmer_number ?? farmer.provisional_reference ?? "Farmer"} · ${[farmer.first_name, farmer.last_name].filter(Boolean).map(String).join(" ") || String(farmer.email ?? "—")}`}</option>)}</select></label>}
             {!fieldOfficer && session.user.user_type !== "FARMER" && <TextField name="customer_name" label="Customer name" hint="Required when no farmer profile is selected." />}
             {!fieldOfficer && session.user.user_type !== "FARMER" && <TextField name="customer_phone" label="Customer phone" hint="Required when no farmer profile is selected." />}
-            <SelectField name="farm" label={fieldOfficer ? "Farm" : "Farm (optional for customer requests)"} rows={farms.filter((farm) => !fieldOfficer || !selectedFarmerId || String(farm.farmer_id) === selectedFarmerId)} required={fieldOfficer} />
+            <SelectField name="farm" label={fieldOfficer ? "Farm" : "Farm (optional for customer requests)"} rows={farms.filter((farm) => !fieldOfficer || !selectedFarmerId || String(farm.farmer_id) === selectedFarmerId)} required={fieldOfficer} value={selectedFarmId} onChange={(value, farm) => {
+              setSelectedFarmId(value);
+              setFarmAcreage(farmSizeInAcres(farm));
+              setFarmLocation(farmLocationText(farm));
+            }} />
         <SelectField name="service" label="Service" rows={services} required />
         <SelectField name="crop" label="Crop (optional)" rows={crops} />
         <SelectField name="season" label="Season (optional)" rows={seasons} />
-        <TextField name="requested_acreage" label="Requested acreage" type="number" />
+        <TextField name="requested_acreage" label="Requested acreage" type="number" hint="Prefilled from the farm size in hectares, converted to acres; adjust to the service area." value={farmAcreage} onChange={setFarmAcreage} />
         <TextField name="requested_date" label="Requested date" type="date" />
-        <TextField name="location" label="Location or access notes" />
+        <TextField name="location" label="Location or access notes" value={farmLocation} onChange={setFarmLocation} />
         <label className="field-label sm:col-span-2 xl:col-span-3">Additional notes<textarea className="field-control h-20 py-2" name="notes" /></label>
         <div className="sm:col-span-2 xl:col-span-3"><button disabled={busy} className="primary-button"><Plus size={14} />{busy ? "Creating…" : "Create request"}</button></div>
       </form>
@@ -829,6 +837,8 @@ function ProducePage({ session, onToast }: { session: SessionInfo; onToast: (mes
   const can = (permission: string) => permitted(session, permission);
   const fieldOfficer = isFieldOfficer(session);
   const [selectedFarmerId, setSelectedFarmerId] = useState("");
+  const [selectedFarmId, setSelectedFarmId] = useState("");
+  const [farmLocation, setFarmLocation] = useState("");
 
   const load = useCallback(async () => {
     setLoading(true); setError(null);
@@ -855,7 +865,7 @@ function ProducePage({ session, onToast }: { session: SessionInfo; onToast: (mes
     const formElement = event.currentTarget;
     const body = Object.fromEntries([...new FormData(formElement).entries()].filter(([, value]) => String(value).trim() !== ""));
     if (session.user.user_type === "FARMER") delete body.farmer;
-    try { const result = await apiRequest<Row>("produce/listings", { method: "POST", body });     setSuccess(`Produce listing ${String(result.offer_reference ?? "")} created.`); formElement.reset(); setSelectedFarmerId(""); onToast("Produce listing created."); await load(); }
+    try { const result = await apiRequest<Row>("produce/listings", { method: "POST", body });         setSuccess(`Produce listing ${String(result.offer_reference ?? "")} created.`); formElement.reset(); setSelectedFarmerId(""); setSelectedFarmId(""); setFarmLocation(""); onToast("Produce listing created."); await load(); }
     catch (reason) { setError(reason); }
     finally { setBusy(false); }
   }
@@ -892,14 +902,14 @@ function ProducePage({ session, onToast }: { session: SessionInfo; onToast: (mes
     {editingOffer && <SectionCard title={`Edit ${String(editingOffer.offer_reference)}`} actions={<button className="secondary-button" onClick={() => setEditingOffer(null)}>Cancel</button>}><form onSubmit={updateOffer} className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-3"><TextField name="quantity" label="Quantity" type="number" defaultValue={String(editingOffer.quantity ?? "")} /><TextField name="unit" label="Unit" defaultValue={String(editingOffer.unit ?? "")} /><TextField name="expected_harvest_at" label="Expected harvest date" type="date" defaultValue={String(editingOffer.expected_harvest_at ?? "")} /><label className="field-label">Harvest status<select className="field-control" name="harvest_status" defaultValue={String(editingOffer.harvest_status ?? "EXPECTED")}><option value="EXPECTED">Expected</option><option value="READY">Ready for harvest</option><option value="HARVESTED">Harvested</option></select></label><OperationalOptionSelect kind="PRODUCE_QUALITY_GRADE" name="quality_grade" label="Quality grade" defaultValue={String(editingOffer.quality_grade ?? "")} isSuperAdmin={isSuperAdmin(session)} /><TextField name="location" label="Collection location" defaultValue={String(editingOffer.location ?? "")} /><TextField name="asking_price" label="Asking price (NGN)" type="number" defaultValue={String(editingOffer.asking_price ?? "")} /><button disabled={busy} className="primary-button">Save listing</button></form></SectionCard>}
     {canCreate && <SectionCard title="Create produce listing" description="Create a draft offer, then submit it for review and quality assessment.">
       <form onSubmit={create} className="grid gap-4 p-5 sm:grid-cols-2 lg:grid-cols-3">
-        {session.user.user_type !== "FARMER" && <label className="field-label">Farmer{fieldOfficer ? "" : " (optional)"}<select className="field-control" name="farmer" required={fieldOfficer} value={selectedFarmerId} onChange={(event) => setSelectedFarmerId(event.target.value)}><option value="">Select a farmer…</option>{farmers.map((farmer) => {
+        {session.user.user_type !== "FARMER" && <label className="field-label">Farmer{fieldOfficer ? "" : " (optional)"}<select className="field-control" name="farmer" required={fieldOfficer} value={selectedFarmerId} onChange={(event) => { setSelectedFarmerId(event.target.value); setSelectedFarmId(""); setFarmLocation(""); }}><option value="">Select a farmer…</option>{farmers.map((farmer) => {
           const farmerName = [farmer.first_name, farmer.last_name].filter(Boolean).map(String).join(" ") || String(farmer.email ?? "Farmer");
           const farmerNumber = farmer.farmer_number ? ` · ${String(farmer.farmer_number)}` : "";
           return <option key={String(farmer.id)} value={String(farmer.id)}>{farmerName}{farmerNumber}</option>;
         })}</select><span className="field-hint">Choose a farmer by name for this assisted listing.</span></label>}
-        <SelectField name="farm" label="Farm" rows={farms.filter((farm) => !fieldOfficer || !selectedFarmerId || String(farm.farmer_id) === selectedFarmerId)} required /><SelectField name="crop" label="Crop" rows={crops} required /><SelectField name="season" label="Season (optional)" rows={seasons} />
+        <SelectField name="farm" label="Farm" rows={farms.filter((farm) => !fieldOfficer || !selectedFarmerId || String(farm.farmer_id) === selectedFarmerId)} required value={selectedFarmId} onChange={(value, farm) => { setSelectedFarmId(value); setFarmLocation(farmLocationText(farm)); }} /><SelectField name="crop" label="Crop" rows={crops} required /><SelectField name="season" label="Season (optional)" rows={seasons} />
         <TextField name="quantity" label="Quantity" type="number" required /><TextField name="unit" label="Unit" hint="For example KG or TONS." /><TextField name="asking_price" label="Asking price (NGN)" type="number" required />
-        <TextField name="expected_harvest_at" label="Expected harvest date" type="date" /><label className="field-label">Harvest status<select className="field-control" name="harvest_status" defaultValue="EXPECTED"><option value="EXPECTED">Expected</option><option value="READY">Ready for harvest</option><option value="HARVESTED">Harvested</option></select></label><OperationalOptionSelect kind="PRODUCE_QUALITY_GRADE" name="quality_grade" label="Quality grade" isSuperAdmin={isSuperAdmin(session)} /><TextField name="location" label="Collection location" />
+        <TextField name="expected_harvest_at" label="Expected harvest date" type="date" /><label className="field-label">Harvest status<select className="field-control" name="harvest_status" defaultValue="EXPECTED"><option value="EXPECTED">Expected</option><option value="READY">Ready for harvest</option><option value="HARVESTED">Harvested</option></select></label><OperationalOptionSelect kind="PRODUCE_QUALITY_GRADE" name="quality_grade" label="Quality grade" isSuperAdmin={isSuperAdmin(session)} /><TextField name="location" label="Collection location" value={farmLocation} onChange={setFarmLocation} />
         <div className="sm:col-span-2 lg:col-span-3"><button disabled={busy} className="primary-button"><Plus size={14} /> Create listing</button></div>
       </form>
     </SectionCard>}

@@ -11,6 +11,7 @@ import { useRouter, useSearchParams } from "next/navigation";
 import { FormEvent, useEffect, useRef, useState } from "react";
 import type { Page, RoleGrant, SessionUser } from "@/lib/api";
 import { apiRequest, ApiError, errorMessage, pageQuery } from "@/lib/api";
+import { farmLocationText, farmSizeInAcres } from "@/lib/farm-form-values";
 import { createUuid } from "@/lib/uuid";
 import { isEncryptedOfflineQueueAvailable, readOfflineEntries, removeOfflineEntry, storeOfflineEntry } from "@/lib/offline-queue";
 import type { OfflineEntry } from "@/lib/offline-queue";
@@ -139,13 +140,13 @@ const resources: Record<string, Resource> = {
     title: "Farm-season crops", eyebrow: "Agronomy / Crop records", endpoint: "farm-crops/farm-crops", permission: "farm_crop.read",
     columns: [{ key: "farm_name", label: "Farm" }, { key: "crop_name", label: "Crop" }, { key: "season_name", label: "Season" }, { key: "area_hectares", label: "Area" }, { key: "status", label: "Status", status: true }],
     createPermission: "farm_crop.create", detailHref: "/farm-crops", paginated: false,
-    fields: [{ name: "farm", label: "Farm", lookup: "farms", required: true }, { name: "crop", label: "Crop", lookup: "crops", required: true }, { name: "season", label: "Season", lookup: "seasons", required: true }, { name: "area_hectares", label: "Area (ha)", type: "number" }, { name: "planted_at", label: "Planted date", type: "date" }, { name: "expected_harvest_at", label: "Expected harvest", type: "date" }, { name: "expected_yield", label: "Expected yield", type: "number" }],
+    fields: [{ name: "farm", label: "Farm", lookup: "farms", required: true }, { name: "crop", label: "Crop", lookup: "crops", required: true }, { name: "season", label: "Season", lookup: "seasons", required: true }, { name: "area_hectares", label: "Area (ha)", type: "number", hint: "Prefilled with the farm size; adjust to the area planted with this crop." }, { name: "planted_at", label: "Planted date", type: "date" }, { name: "expected_harvest_at", label: "Expected harvest", type: "date" }, { name: "expected_yield", label: "Expected yield", type: "number" }],
   },
   cropActivities: {
     title: "Crop activity log", eyebrow: "Agronomy / Activity history", endpoint: "crop-activities", permission: "crop_activity.read",
     columns: [{ key: "farm_crop_label", label: "Farm · Crop · Season" }, { key: "activity_type", label: "Activity" }, { key: "activity_date", label: "Date" }, { key: "description", label: "Description" }, { key: "quantity", label: "Quantity" }],
     createPermission: "crop_activity.create", paginated: false,
-    fields: [{ name: "farm_crop", label: "Farm crop", lookup: "farmCrops", required: true }, { name: "activity_type", label: "Activity type", required: true }, { name: "activity_date", label: "Activity date", type: "date", required: true }, { name: "description", label: "Description", type: "textarea", wide: true }, { name: "quantity", label: "Quantity", type: "number" }, { name: "unit", label: "Unit" }],
+    fields: [{ name: "farm_crop", label: "Farm crop", lookup: "farmCrops", required: true }, { name: "activity_type", label: "Activity type", options: ["LAND_PREPARATION", "PLANTING", "FERTILIZER_APPLICATION", "IRRIGATION", "WEEDING", "PEST_CONTROL", "DISEASE_CONTROL", "PRUNING", "HARVESTING", "POST_HARVEST_HANDLING", "OTHER"], required: true }, { name: "activity_date", label: "Activity date", type: "date", required: true }, { name: "description", label: "Description", type: "textarea", wide: true }, { name: "quantity", label: "Quantity", type: "number" }, { name: "unit", label: "Unit" }],
   },
   officers: {
     title: "Field officers", eyebrow: "People / Field team", endpoint: "field-officers/field-officers", permission: "field_officer.read", paginated: true,
@@ -243,7 +244,7 @@ export default function WorkflowPages({ path, session, onToast, onSessionRefresh
   if (session.user.user_type === "FARMER" && ["farmers", "crops", "seasons", "document-types"].includes(section)) return <NotAvailable path={path} />;
 
   if (requiredPermission && !hasPermission(session, requiredPermission)) return <Denied title={resource.title} permission={requiredPermission} />;
-  if (investmentPermission && !hasPermission(session, investmentPermission)) {
+  if (investmentPermission && !isSuperAdmin(session) && !hasPermission(session, investmentPermission)) {
     return <Denied title={section[0].toUpperCase() + section.slice(1)} permission={investmentPermission} />;
   }
   if (communicationPermission && !hasPermission(session, communicationPermission)) {
@@ -385,12 +386,16 @@ function OfflineSyncPage({ session, onToast }: { session: SessionInfo; onToast: 
     <div className="grid gap-5 xl:grid-cols-2">
       {canQueueService && <form onSubmit={saveService} className="surface-panel p-5 sm:p-6"><div className="eyebrow">Service request</div><h2 className="mt-1 text-sm font-semibold">Queue a request</h2><p className="mt-1 text-[11px] leading-5 text-[var(--muted)]">Requires a service ID and either a farmer or customer name plus phone.</p><div className="mt-4 grid gap-3 sm:grid-cols-2">
         <OfflineField name="service" label="Service ID" required />
-        <LookupSelect field={{ name: "farmer", label: "Farmer", lookup: "farmers" }} session={session} value={serviceValues.farmer ?? ""} dependencyValue="" onChange={(value) => setServiceValues((current) => ({ ...current, farmer: value, farm: "" }))} />
-        <LookupSelect field={{ name: "farm", label: "Farm", lookup: "farms", dependsOn: "farmer" }} session={session} value={serviceValues.farm ?? ""} dependencyValue={serviceValues.farmer ?? ""} onChange={(value) => setServiceValues((current) => ({ ...current, farm: value }))} />
-        <OfflineField name="customer_name" label="Customer name" /><OfflineField name="customer_phone" label="Customer phone" type="tel" /><OfflineField name="requested_date" label="Requested date" type="date" /><OfflineField name="requested_acreage" label="Acreage" type="number" /><OfflineField name="estimated_cost" label="Estimated cost" type="number" />
+        <LookupSelect field={{ name: "farmer", label: "Farmer", lookup: "farmers" }} session={session} value={serviceValues.farmer ?? ""} dependencyValue="" onChange={(value) => setServiceValues((current) => ({ ...current, farmer: value, farm: "", requested_acreage: "", location: "" }))} />
+        <LookupSelect field={{ name: "farm", label: "Farm", lookup: "farms", dependsOn: "farmer" }} session={session} value={serviceValues.farm ?? ""} dependencyValue={serviceValues.farmer ?? ""} onChange={(value, farm) => {
+          const acreage = farmSizeInAcres(farm);
+          const location = farmLocationText(farm);
+          setServiceValues((current) => ({ ...current, farm: value, requested_acreage: acreage, location }));
+        }} />
+        <OfflineField name="customer_name" label="Customer name" /><OfflineField name="customer_phone" label="Customer phone" type="tel" /><OfflineField name="requested_date" label="Requested date" type="date" /><OfflineField name="requested_acreage" label="Acreage" type="number" value={serviceValues.requested_acreage ?? ""} onChange={(value) => setServiceValues((current) => ({ ...current, requested_acreage: value }))} /><OfflineField name="estimated_cost" label="Estimated cost" type="number" />
         <LookupSelect field={{ name: "season", label: "Season", lookup: "seasons" }} session={session} value={serviceValues.season ?? ""} dependencyValue="" onChange={(value) => setServiceValues((current) => ({ ...current, season: value }))} />
         <LookupSelect field={{ name: "crop", label: "Crop", lookup: "crops" }} session={session} value={serviceValues.crop ?? ""} dependencyValue="" onChange={(value) => setServiceValues((current) => ({ ...current, crop: value }))} />
-        <OfflineField name="location" label="Location" /><OfflineField name="notes" label="Notes" />
+        <OfflineField name="location" label="Location" value={serviceValues.location ?? ""} onChange={(value) => setServiceValues((current) => ({ ...current, location: value }))} /><OfflineField name="notes" label="Notes" />
       </div>{Boolean(serviceError) && <div className="mt-4"><ErrorPanel error={serviceError} /></div>}<button className="primary-button mt-5"><Plus size={14} /> Save request offline</button></form>}
       {canQueueReport && <form onSubmit={saveReport} className="surface-panel p-5 sm:p-6"><div className="eyebrow">Field or other report</div><h2 className="mt-1 text-sm font-semibold">Queue a report</h2><p className="mt-1 text-[11px] leading-5 text-[var(--muted)]">A field report includes the associated farmer and farm.</p><div className="mt-4 grid gap-3 sm:grid-cols-2">
         <label className="field-label">Report type<select className="field-control" name="report_type" value={reportValues.report_type} required onChange={(event) => setReportValues((current) => ({ ...current, report_type: event.target.value, ...(event.target.value === "OTHER" ? { farmer: "", farm: "" } : {}) }))}><option value="FIELD">Field</option><option value="OTHER">Other</option></select></label>
@@ -405,8 +410,8 @@ function OfflineSyncPage({ session, onToast }: { session: SessionInfo; onToast: 
   </>;
 }
 
-function OfflineField({ name, label, type = "text", required = false, wide = false }: { name: string; label: string; type?: string; required?: boolean; wide?: boolean }) {
-  return <label className={`field-label ${wide ? "sm:col-span-2" : ""}`}>{label}<input className="field-control" name={name} type={type} required={required} /></label>;
+function OfflineField({ name, label, type = "text", required = false, wide = false, value, onChange }: { name: string; label: string; type?: string; required?: boolean; wide?: boolean; value?: string; onChange?: (value: string) => void }) {
+  return <label className={`field-label ${wide ? "sm:col-span-2" : ""}`}>{label}<input className="field-control" name={name} type={type} required={required} {...(value === undefined ? {} : { value })} onChange={onChange ? (event) => onChange(event.target.value) : undefined} /></label>;
 }
 
 function PasswordChangePage({ onToast }: { onToast: (message: string) => void }) {
@@ -527,12 +532,65 @@ function CreatePage({ resource, session, onToast }: { resource: Resource; sessio
   const [fieldOfficerRegionsReady, setFieldOfficerRegionsReady] = useState(false);
   const canCreate = hasPermission(session, resource.createPermission);
 
-  useEffect(() => { if (resource === resources.farmers || resource === resources.farms) apiRequest<Row[]>("geography/states").then(setStates).catch(() => setStates([])); }, [resource]);
+  useEffect(() => { if (resource.fields?.some((field) => ["state", "lga", "ward"].includes(field.name))) apiRequest<Row[]>("geography/states").then(setStates).catch(() => setStates([])); }, [resource]);
   useEffect(() => { if (selectedState) apiRequest<Row[]>(`geography/states/${selectedState}/lgas`).then(setLgas).catch(() => setLgas([])); }, [selectedState]);
   useEffect(() => { if (selectedLga) apiRequest<Row[]>(`geography/lgas/${selectedLga}/wards`).then(setWards).catch(() => setWards([])); }, [selectedLga]);
 
-  function changeState(value: string) { setSelectedState(value); setSelectedLga(""); setLgas([]); setWards([]); }
-  function changeLga(value: string) { setSelectedLga(value); setWards([]); }
+  function changeState(value: string) {
+    setSelectedState(value); setSelectedLga(""); setLgas([]); setWards([]);
+    setFieldValues((current) => ({ ...current, state: value, lga: "", ward: "" }));
+  }
+  function changeLga(value: string) {
+    setSelectedLga(value); setWards([]);
+    setFieldValues((current) => ({ ...current, lga: value, ward: "" }));
+  }
+
+  function populateFromFarm(farm: Row | null) {
+    const farmValue = (key: string, idKey: string) => {
+      const value = farm?.[idKey] ?? farm?.[key];
+      if (value && typeof value === "object") return recordId(value as Row);
+      return String(value ?? "");
+    };
+    const locationText = String(farm?.location_text || [farm?.community_name, farm?.ward_name, farm?.lga_name, farm?.state_name].filter(Boolean).join(", "));
+    const values: Record<string, string> = {
+      area_hectares: String(farm?.size_hectares ?? ""),
+      size_hectares: String(farm?.size_hectares ?? ""),
+      latitude: String(farm?.latitude ?? ""),
+      longitude: String(farm?.longitude ?? ""),
+      state: farmValue("state", "state_id"),
+      state_id: farmValue("state", "state_id"),
+      lga: farmValue("lga", "lga_id"),
+      lga_id: farmValue("lga", "lga_id"),
+      ward: farmValue("ward", "ward_id"),
+      ward_id: farmValue("ward", "ward_id"),
+      community: farmValue("community", "community_id"),
+      community_id: farmValue("community", "community_id"),
+      location: locationText,
+      location_text: locationText,
+    };
+    const relevantFields = new Set(Object.keys(values));
+    setFieldValues((current) => {
+      const updated = { ...current };
+      for (const [name, value] of Object.entries(values)) {
+        if (resource.fields?.some((field) => field.name === name)) updated[name] = value;
+      }
+      return updated;
+    });
+    const state = resource.fields?.some((field) => field.name === "state") ? values.state : "";
+    const lga = resource.fields?.some((field) => field.name === "lga") ? values.lga : "";
+    if (resource.fields?.some((field) => field.name === "state" || field.name === "lga" || field.name === "ward")) {
+      setSelectedState(state);
+      setSelectedLga(lga);
+      setLgas([]);
+      setWards([]);
+    }
+    if (!farm && resource.fields?.some((field) => relevantFields.has(field.name))) {
+      setSelectedState("");
+      setSelectedLga("");
+      setLgas([]);
+      setWards([]);
+    }
+  }
 
   if (!canCreate || !resource.fields) return <Denied title={`New ${resource.title.toLowerCase()}`} permission={resource.createPermission ?? "create"} />;
 
@@ -554,6 +612,16 @@ function CreatePage({ resource, session, onToast }: { resource: Resource; sessio
     const reportType = String(body.report_type ?? "");
     if (resource === resources.reports && reportType === "FIELD" && (!body.farmer || !body.farm)) { setError("FIELD reports require both a farmer and a farm."); setBusy(false); return; }
     if (resource === resources.reports && reportType === "OTHER") { delete body.farmer; delete body.farm; }
+    if (resource === resources.cropActivities && body.activity_type === "OTHER") {
+      const customActivityType = String(body.custom_activity_type ?? "").trim();
+      if (!customActivityType) {
+        setError("Enter the activity type when Other is selected.");
+        setBusy(false);
+        return;
+      }
+      body.activity_type = customActivityType;
+      delete body.custom_activity_type;
+    }
     for (const name of ["active", "is_required_for_kyc"]) if (body[name] !== undefined) body[name] = body[name] === "true";
     try {
       const result = await apiRequest<Row>(resource.endpoint, { method: "POST", body });
@@ -615,7 +683,10 @@ function CreatePage({ resource, session, onToast }: { resource: Resource; sessio
       if (resource === resources.reports && fieldValues.report_type === "OTHER" && ["farmer", "farm"].includes(field.name)) return null;
       const required = field.required || resource === resources.reports && fieldValues.report_type === "FIELD" && ["farmer", "farm"].includes(field.name);
       const fieldValuesWithFarmer = fieldValues.farmer_id ? fieldValues : { ...fieldValues, farmer_id: searchParams.get("farmer_id") ?? "" };
-      const formField = <FormField field={{ ...field, required }} states={states} lgas={lgas} wards={wards} selectedState={selectedState} selectedLga={selectedLga} fieldValues={fieldValuesWithFarmer} session={session} onFieldValue={(name, value) => setFieldValues((current) => ({ ...current, [name]: value, ...(name === "farmer" ? { farm: "" } : {}) }))} onState={changeState} onLga={changeLga} />;
+      const formField = <FormField field={{ ...field, required }} states={states} lgas={lgas} wards={wards} selectedState={selectedState} selectedLga={selectedLga} fieldValues={fieldValuesWithFarmer} session={session} onFieldValue={(name, value, selectedRow) => {
+        setFieldValues((current) => ({ ...current, [name]: value, ...(name === "farmer" ? { farm: "" } : {}) }));
+        if (name === "farm") populateFromFarm(selectedRow ?? null);
+      }} onState={changeState} onLga={changeLga} />;
       return resource === resources.farms && field.name === "farmer_id" && hasPermission(session, "farmer.create")
         ? <div key={field.name}>{formField}<Link href="/farmers/new" className="field-hint mt-2 inline-flex font-semibold text-[#a34e3d] underline">Farmer not listed? Create a new farmer</Link></div>
         : <div key={field.name}>{formField}</div>;
@@ -642,15 +713,20 @@ function CreatePage({ resource, session, onToast }: { resource: Resource; sessio
   </>;
 }
 
-function FormField({ field, states, lgas, wards, selectedState, selectedLga, fieldValues, session, onFieldValue, onState, onLga }: { field: Field; states: Row[]; lgas: Row[]; wards: Row[]; selectedState: string; selectedLga: string; fieldValues: Record<string, string>; session: SessionInfo; onFieldValue: (name: string, value: string) => void; onState: (value: string) => void; onLga: (value: string) => void }) {
+function FormField({ field, states, lgas, wards, selectedState, selectedLga, fieldValues, session, onFieldValue, onState, onLga }: { field: Field; states: Row[]; lgas: Row[]; wards: Row[]; selectedState: string; selectedLga: string; fieldValues: Record<string, string>; session: SessionInfo; onFieldValue: (name: string, value: string, selectedRow?: Row) => void; onState: (value: string) => void; onLga: (value: string) => void }) {
   const wide = field.wide ? "sm:col-span-2" : "";
-  if (field.lookup) return <LookupSelect field={field} session={session} value={fieldValues[field.name] ?? ""} dependencyValue={field.dependsOn ? fieldValues[field.dependsOn] ?? "" : ""} onChange={(value) => onFieldValue(field.name, value)} />;
+  if (field.lookup) return <LookupSelect field={field} session={session} value={fieldValues[field.name] ?? ""} dependencyValue={field.dependsOn ? fieldValues[field.dependsOn] ?? "" : ""} onChange={(value, selectedRow) => onFieldValue(field.name, value, selectedRow)} />;
   if (["state", "lga", "ward"].includes(field.name)) {
     const entries = field.name === "state" ? states : field.name === "lga" ? lgas : wards;
     const disabled = field.name === "lga" ? !selectedState : field.name === "ward" ? !selectedLga : false;
-    return <label className={`field-label ${wide}`}>{field.label}<select className="field-control" name={field.name} disabled={disabled} onChange={(event) => field.name === "state" ? onState(event.target.value) : field.name === "lga" ? onLga(event.target.value) : undefined}><option value="">Optional</option>{entries.map((entry) => <option key={String(entry.id)} value={String(entry.id)}>{display(entry.name)}</option>)}</select></label>;
+    return <label className={`field-label ${wide}`}>{field.label}<select className="field-control" name={field.name} value={fieldValues[field.name] ?? (field.name === "state" ? selectedState : field.name === "lga" ? selectedLga : "")} disabled={disabled} onChange={(event) => {
+      const value = event.target.value;
+      if (field.name === "state") onState(value);
+      else if (field.name === "lga") onLga(value);
+      onFieldValue(field.name, value);
+    }}><option value="">Optional</option>{entries.map((entry) => <option key={String(entry.id)} value={String(entry.id)}>{display(entry.name)}</option>)}</select></label>;
   }
-  if (field.options) return <label className={`field-label ${wide}`}>{field.label}<select className="field-control" name={field.name} value={fieldValues[field.name] ?? ""} onChange={(event) => onFieldValue(field.name, event.target.value)} required={field.required}><option value="">Select…</option>{field.options.map((value) => <option key={value}>{value}</option>)}</select>{field.hint && <span className="field-hint">{field.hint}</span>}</label>;
+  if (field.options) return <><label className={`field-label ${wide}`}>{field.label}<select className="field-control" name={field.name} value={fieldValues[field.name] ?? ""} onChange={(event) => onFieldValue(field.name, event.target.value)} required={field.required}><option value="">Select…</option>{field.options.map((value) => <option key={value}>{value}</option>)}</select>{field.hint && <span className="field-hint">{field.hint}</span>}</label>{field.name === "activity_type" && fieldValues.activity_type === "OTHER" && <label className="field-label">Specify activity type<input className="field-control" name="custom_activity_type" value={fieldValues.custom_activity_type ?? ""} onChange={(event) => onFieldValue("custom_activity_type", event.target.value)} required /></label>}</>;
   if (field.type === "textarea") return <label className={`field-label ${wide}`}>{field.label}<textarea className="field-control min-h-[86px] resize-y py-2.5" name={field.name} required={field.required} placeholder={field.placeholder} value={fieldValues[field.name] ?? ""} onChange={(event) => onFieldValue(field.name, event.target.value)} /></label>;
   return <label className={`field-label ${wide}`}>{field.label}<input className="field-control" name={field.name} type={field.type ?? "text"} required={field.required} placeholder={field.placeholder} value={fieldValues[field.name] ?? ""} onChange={(event) => onFieldValue(field.name, event.target.value)} />{field.hint && <span className="field-hint">{field.hint}</span>}</label>;
 }
@@ -798,7 +874,7 @@ function lookupOptionLabel(row: Row, lookup: LookupKind) {
   return `${[row.first_name, row.last_name].filter(Boolean).map(String).join(" ") || display(row.email)}${row.email ? ` · ${display(row.email)}` : ""}${lookup === "users" && row.user_type ? ` · ${display(row.user_type)}` : ""}`;
 }
 
-function LookupSelect({ field, session, value, dependencyValue, onChange }: { field: Field; session: SessionInfo; value: string; dependencyValue: string; onChange: (value: string) => void }) {
+function LookupSelect({ field, session, value, dependencyValue, onChange }: { field: Field; session: SessionInfo; value: string; dependencyValue: string; onChange: (value: string, selectedRow?: Row) => void }) {
   const [options, setOptions] = useState<Row[]>([]);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<unknown>(null);
@@ -833,7 +909,7 @@ function LookupSelect({ field, session, value, dependencyValue, onChange }: { fi
   }) : options;
   const disabled = !canRead || visibleLoading || waitingForParent || Boolean(visibleError);
   const placeholder = waitingForParent ? "Choose a farmer first" : visibleLoading ? "Loading options…" : visibleError ? "Options unavailable" : `Select ${field.label.toLowerCase()}…`;
-  return <label className={`field-label ${field.wide ? "sm:col-span-2" : ""}`}>{field.label}<select className="field-control" name={field.name} value={value} onChange={(event) => onChange(event.target.value)} required={field.required} disabled={disabled}><option value="">{placeholder}</option>{visibleOptions.map((row) => { const optionValue = lookupOptionValue(row, lookup); return optionValue ? <option key={optionValue} value={optionValue}>{lookupOptionLabel(row, lookup)}</option> : null; })}</select>{field.hint && <span className="field-hint">{field.hint}</span>}{!canRead && <span className="field-hint">Your account cannot load these choices.</span>}{Boolean(visibleError) && <span className="flex items-center gap-2 text-[10px] text-[#a34e3d]">Could not load choices.<button type="button" className="font-semibold" onClick={() => setRetry((value) => value + 1)}>Retry</button></span>}{!visibleLoading && !visibleError && canRead && !waitingForParent && visibleOptions.length === 0 && <span className="field-hint">No choices are available.</span>}</label>;
+  return <label className={`field-label ${field.wide ? "sm:col-span-2" : ""}`}>{field.label}<select className="field-control" name={field.name} value={value} onChange={(event) => onChange(event.target.value, visibleOptions.find((row) => lookupOptionValue(row, lookup) === event.target.value))} required={field.required} disabled={disabled}><option value="">{placeholder}</option>{visibleOptions.map((row) => { const optionValue = lookupOptionValue(row, lookup); return optionValue ? <option key={optionValue} value={optionValue}>{lookupOptionLabel(row, lookup)}</option> : null; })}</select>{field.hint && <span className="field-hint">{field.hint}</span>}{!canRead && <span className="field-hint">Your account cannot load these choices.</span>}{Boolean(visibleError) && <span className="flex items-center gap-2 text-[10px] text-[#a34e3d]">Could not load choices.<button type="button" className="font-semibold" onClick={() => setRetry((value) => value + 1)}>Retry</button></span>}{!visibleLoading && !visibleError && canRead && !waitingForParent && visibleOptions.length === 0 && <span className="field-hint">No choices are available.</span>}</label>;
 }
 
 function FarmerDetail({ id, session, onToast }: { id: string; session: SessionInfo; onToast: (message: string) => void }) {

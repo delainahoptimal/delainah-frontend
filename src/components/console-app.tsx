@@ -158,7 +158,7 @@ export default function ConsoleApp() {
     const farmerHiddenRoutes = new Set(["/farmers", "/crops", "/seasons", "/document-types"]);
     const isSuperAdmin = session.user.user_type === "SUPER_ADMIN" || session.roles.some((role) => role.code === "SUPER_ADMIN");
     const isInvestor = Boolean(session && (session.user.user_type?.toUpperCase() === "INVESTOR" || session.roles.some((role) => role.code === "INVESTOR")));
-    return navItems.filter((item) => (item.any.some((permission) => session.permissions.includes(permission)) || (isSuperAdmin && (item.href === "/service-requests" || item.href === "/operations" || item.href === "/operations/catalogues" || item.href === "/operations/locations"))) && !(session.user.user_type === "FARMER" && farmerHiddenRoutes.has(item.href)) && !(isInvestor && item.href === "/document-types"));
+    return navItems.filter((item) => (item.any.some((permission) => session.permissions.includes(permission)) || (isSuperAdmin && (item.href === "/service-requests" || item.href === "/operations" || item.href === "/operations/catalogues" || item.href === "/operations/locations" || ["/projects", "/investors", "/investments", "/withdrawals"].includes(item.href)))) && !(session.user.user_type === "FARMER" && farmerHiddenRoutes.has(item.href)) && !(isInvestor && item.href === "/document-types"));
   }, [session]);
   const navGroups = useMemo(() => {
     const groups = new Map<string, typeof availableNav>();

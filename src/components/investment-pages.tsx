@@ -1,7 +1,7 @@
 "use client";
 
 import Link from "next/link";
-import { useRouter } from "next/navigation";
+import { useRouter, useSearchParams } from "next/navigation";
 import { useCallback, useEffect, useState } from "react";
 import type { FormEvent, ReactNode } from "react";
 import { apiRequest, errorMessage } from "@/lib/api";
@@ -13,7 +13,9 @@ type SessionInfo = { user: SessionUser; permissions: string[]; roles: RoleGrant[
 type Props = { path: string; session: SessionInfo; onToast: (message: string) => void };
 
 function can(session: SessionInfo, permission: string) {
-  return !session.permissionError && session.permissions.includes(permission);
+  const isSuperAdmin = session.user.user_type?.toUpperCase() === "SUPER_ADMIN"
+    || session.roles.some((role) => role.code === "SUPER_ADMIN");
+  return isSuperAdmin || (!session.permissionError && session.permissions.includes(permission));
 }
 
 function rowString(row: Row, key: string, fallback = "—") {
@@ -293,7 +295,7 @@ function ProjectCreate({ session, onToast }: { session: SessionInfo; onToast: (m
     <ProjectReferenceSelect name="farm" label="Farm" endpoint="farms/farms" permission="farm.read" session={session} required onSelect={setSelectedFarm} />
     <ProjectReferenceSelect name="crop" label="Crop" endpoint="crops/crops" permission="crop.read" session={session} />
     <ProjectReferenceSelect name="season" label="Season" endpoint="seasons" permission="season.read" session={session} />
-    <ProjectLocationFields farm={selectedFarm} />
+    <ProjectLocationFields key={String(selectedFarm?.id ?? "no-farm")} farm={selectedFarm} />
     <Field name="duration_start" label="Duration start" type="date" /><Field name="duration_end" label="Duration end" type="date" />
     <Field name="funding_target" label="Funding target" type="number" required /><Field name="minimum_participation" label="Minimum participation" type="number" required />
     <Field name="currency" label="Currency" defaultValue="NGN" required />
@@ -823,6 +825,26 @@ function InvestmentsPage({ session, onToast }: Props) {
     }
   }
 
+  async function verifyPayment(id: string) {
+    setBusyId(id);
+    setError(null);
+    try {
+      const result = await apiRequest<Row>(`investments/investments/${id}/verify-payment`, {
+        method: "POST",
+        body: {},
+      });
+      const investment = result.investment && typeof result.investment === "object"
+        ? result.investment as Row
+        : {};
+      onToast(`Paystack check completed. Investment status: ${rowString(investment, "status")}.`);
+      await load();
+    } catch (requestError) {
+      setError(requestError);
+    } finally {
+      setBusyId("");
+    }
+  }
+
   async function openStatement(id: string) {
     setError(null);
     try {
@@ -839,11 +861,72 @@ function InvestmentsPage({ session, onToast }: Props) {
       return <tr key={id}><td className="mono">{rowString(row, "investment_reference")}</td><td>{rowString(row, "project_title")}</td><td>{money(row.principal_amount, rowString(row, "currency", "NGN"))}</td><td>{money(row.expected_return, rowString(row, "currency", "NGN"))}</td><td>{rowString(row, "payment_method")}<br /><span className="text-[10px] text-[var(--muted)]">{rowString(row, "payment_reference")}</span></td><td><StatePill value={status} /></td><td><div className="flex flex-wrap gap-1">
         <button className="secondary-button px-2 py-1 text-[10px]" onClick={() => void openStatement(id)}>Statement</button>
         {can(session, "investment.roi.read") && <Link className="secondary-button px-2 py-1 text-[10px]" href={`/investments/${id}/roi`}>ROI</Link>}
+        {status === "PENDING" && row.payment_method === "PAYSTACK" && <button className="secondary-button px-2 py-1 text-[10px]" disabled={busyId === id} onClick={() => void verifyPayment(id)}>Verify Paystack payment</button>}
         {canAdmin && status === "PENDING" && row.payment_method === "MANUAL_TRANSFER" && <button className="secondary-button px-2 py-1 text-[10px]" disabled={busyId === id} onClick={() => void action(id, "confirm", { decision: "VERIFY" })}>Verify payment</button>}
         {can(session, "investment.approve") && status === "CONFIRMED" && <button className="secondary-button px-2 py-1 text-[10px]" disabled={busyId === id} onClick={() => void action(id, "approve")}>Approve</button>}
       </div></td></tr>;
     })}</tbody></table></div> : <p className="text-xs text-[var(--muted)]">No investment activity is available.</p>}</Panel>
     {statement && <Panel title="Statement"><pre className="overflow-x-auto whitespace-pre-wrap text-[11px] leading-5">{JSON.stringify(statement, null, 2)}</pre></Panel>}
+  </>;
+}
+
+function PaystackReturnPage() {
+  const searchParams = useSearchParams();
+  const reference = searchParams.get("reference") || searchParams.get("trxref") || "";
+  const [verification, setVerification] = useState<{
+    reference: string;
+    attempt: number;
+    result?: Row;
+    error?: unknown;
+  } | null>(null);
+  const [retry, setRetry] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+    if (!reference) return () => { active = false; };
+    apiRequest<Row>("investments/payments/verify", {
+      method: "POST",
+      body: { reference },
+    }).then((response) => {
+      if (active) setVerification({ reference, attempt: retry, result: response });
+    }).catch((reason: unknown) => {
+      if (active) setVerification({ reference, attempt: retry, error: reason });
+    });
+    return () => { active = false; };
+  }, [reference, retry]);
+
+  const currentVerification = verification?.reference === reference && verification.attempt === retry
+    ? verification
+    : null;
+  const result = currentVerification?.result ?? null;
+  const error = !reference
+    ? "Paystack did not return a transaction reference. Check your participation history or contact support."
+    : currentVerification?.error;
+  const busy = Boolean(reference) && !currentVerification;
+  const investment = result?.investment && typeof result.investment === "object"
+    ? result.investment as Row
+    : null;
+  const status = rowString(investment ?? {}, "status", "PENDING");
+  const detail = status === "CONFIRMED"
+    ? "Paystack has confirmed your payment. The investment is awaiting the separate authorized approval step."
+    : status === "APPROVED" || status === "ACTIVE"
+      ? "Your payment is confirmed and the investment has been approved."
+      : status === "FAILED"
+        ? "Paystack did not confirm this payment. Contact support if your account was charged."
+        : "Paystack has not confirmed this payment yet. You can retry the check or review your participation history.";
+
+  return <><PageHeader eyebrow="Paystack / Payment return" title="Payment status" description={reference ? `Transaction reference ${reference}` : "Checking your Paystack payment"} />
+    {error && <Feedback error={error} />}
+    {busy ? <Panel title="Verifying payment"><p className="text-xs text-[var(--muted)]">Checking the transaction directly with Paystack…</p></Panel> : <>
+      <Panel title="Verification result">
+        <div className="flex flex-wrap items-center gap-3"><StatePill value={status} /><span className="text-xs leading-5 text-[var(--muted)]">{detail}</span></div>
+        {result && <p className="mt-3 text-xs text-[var(--muted)]">Payment provider status: {rowString(result, "provider_status")} · Payment record: {rowString(result, "payment_status")}</p>}
+      </Panel>
+      <div className="flex flex-wrap gap-3">
+        <Link className="primary-button" href="/investments">View participation history</Link>
+        {status === "PENDING" && reference && <button className="secondary-button" onClick={() => setRetry((value) => value + 1)}>Check again</button>}
+      </div>
+    </>}
   </>;
 }
 
@@ -968,6 +1051,7 @@ export default function InvestmentPages(props: Props) {
   }
   if (section === "investors") return <InvestorPages {...props} />;
   if (section === "investments") {
+    if (segments[1] === "paystack-return") return <PaystackReturnPage />;
     if (segments[2] === "roi" && segments[1]) return <ROIPage id={segments[1]} />;
     return <InvestmentsPage {...props} />;
   }
